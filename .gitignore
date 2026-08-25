@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Environment / local overrides
+.env
+.env.*
+!.env.example
+*.local
+
+# Machine-specific Claude Code settings.
+# .claude/launch.json IS committed — it is the project's dev-server config.
+.claude/settings.local.json
+
+# Editors and OS
+.DS_Store
+.idea/
+*.swp
+*.swo
+.vscode/*
+!.vscode/extensions.json

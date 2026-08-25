@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unconscious Layers</title>
+    <link rel="stylesheet" href="/src/styles/stage.css" />
+    <link rel="stylesheet" href="/src/styles/reveal.css" />
+    <link rel="stylesheet" href="/src/styles/debug-panel.css" />
+  </head>
+  <body>
+    <main
+      id="stage"
+      aria-label="A generative painting that responds to the people in front of it"
+    ></main>
+
+    <p id="reveal-text" aria-hidden="true">
+      Can we still be seen when we can't see, ourselves?
+    </p>
+    <img id="reveal-image" src="/images/reveal.svg" alt="" aria-hidden="true" />
+
+    <div id="camera-error" role="status" aria-live="polite"></div>
+
+    <aside
+      id="debug-panel"
+      class="debug-panel"
+      aria-label="Debug parameters and perception readout"
+      hidden
+    >
+      <header class="debug-panel__header">
+        <h2>Debug parameters</h2>
+        <kbd class="debug-panel__key">Space</kbd>
+      </header>
+      <p class="debug-panel__stats">
+        <span><strong id="debug-object-count">0</strong> objects</span>
+        <span><strong id="debug-fps">0</strong> FPS</span>
+      </p>
+      <details class="debug-section debug-diagnostics">
+        <summary>Camera diagnostics</summary>
+        <div class="debug-section__body debug-previews">
+          <figure>
+            <figcaption>Live camera</figcaption>
+            <div id="debug-camera-mount" class="debug-preview">
+              <span>Waiting for camera…</span>
+            </div>
+          </figure>
+          <figure>
+            <figcaption>Segmented outline</figcaption>
+            <div class="debug-preview">
+              <canvas
+                id="debug-mask"
+                width="320"
+                height="180"
+                aria-label="Live segmented person outline"
+              ></canvas>
+            </div>
+          </figure>
+        </div>
+      </details>
+      <form id="debug-form"></form>
+      <footer class="debug-panel__footer">
+        <small>Changes save automatically.</small>
+        <button id="debug-reset" type="button">Reset</button>
+      </footer>
+    </aside>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

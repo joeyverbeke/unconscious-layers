@@ -1,0 +1,24 @@
+{
+  "name": "unconscious-layers",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "dev": "vite --port 5300 --host",
+    "build": "vite build",
+    "preview": "vite preview --port 4173 --host",
+    "check": "node scripts/parity-check.js && node scripts/discovery-sim.js && node scripts/pipeline-check.js && node scripts/experience-check.js",
+    "timing": "node scripts/blink-timing.js"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "0.10.22-rc.20250304",
+    "p5": "^1.9.2"
+  },
+  "devDependencies": {
+    "vite": "6.4.3",
+    "vite-plugin-static-copy": "^2.2.0"
+  }
+}

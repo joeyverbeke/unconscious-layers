@@ -1,0 +1,365 @@
+import { openCamera } from "./camera.js";
+import { createFaceLandmarker, createSegmenter, modelCounts } from "./vision.js";
+import { buildPersonMask, MASK_WIDTH, MASK_HEIGHT } from "./personMask.js";
+import { mapFaceFeatures, faceScaleOf } from "./faceFeatures.js";
+import { createBlinkPipeline } from "./blinkPipeline.js";
+import { createDiscovery } from "./blink/discovery.js";
+import { createParticipant } from "./participant.js";
+import { createEngagement } from "../experience/engagement.js";
+
+/**
+ * One camera, one ImageSegmenter, one FaceLandmarker.
+ *
+ * Everything downstream — presence, contours, eyes and mouth, blink detection,
+ * the discovery determiner and participant identity — is fed from those, so
+ * the page never runs a second copy of a model.
+ */
+export function createPerception({ settings, flags, canvasSize }) {
+  const listeners = new Map();
+  const emit = (event, payload) => {
+    for (const handler of listeners.get(event) ?? []) {
+      try {
+        handler(payload);
+      } catch (error) {
+        console.error(`perception "${event}" listener failed:`, error);
+      }
+    }
+  };
+
+  const blinkPipeline = createBlinkPipeline({
+    config: mapBlinkSettings(settings),
+    normalize: settings.blinkNormalize,
+  });
+
+  const discovery = createDiscovery(mapDiscoverySettings(settings));
+
+  const participant = createParticipant({
+    // Identity bookkeeping only. The visible behaviour is governed by the
+    // engagement gate, which clears everything the moment somebody walks away;
+    // this just decides when a face that has gone counts as a finished session.
+    absenceEndsSession: 3,
+    identityTolerance: settings.identityTolerance,
+    swapConfirm: settings.identitySwapConfirmMs / 1000,
+    onStart: (sessionId) => emit("participant", { type: "start", sessionId }),
+    onEnd: (why, sessionId) => emit("participant", { type: "end", why, sessionId }),
+  });
+
+  const engagement = createEngagement({
+    settings,
+    onChange: (state) => emit("engagement", state),
+  });
+
+  discovery.onDiscovered((report) => emit("discovery", { report }));
+
+  // The hub owns this copy. personMask.js hands back module-level shared
+  // buffers that are overwritten on the next frame, so anything emitted to
+  // listeners must be a copy or it silently reads the wrong frame later.
+  const maskCopy = new Uint8Array(MASK_WIDTH * MASK_HEIGHT);
+
+  let camera = null;
+  let faceLandmarker = null;
+  let segmenter = null;
+  let running = false;
+
+  // MediaPipe demands strictly increasing timestamps per task instance, and
+  // performance.now() can repeat on a coarse clock. Each task gets its own.
+  let lastFaceStamp = 0;
+  let lastSegStamp = 0;
+  const stampFace = () => (lastFaceStamp = Math.max(lastFaceStamp + 1, performance.now()));
+  const stampSeg = () => (lastSegStamp = Math.max(lastSegStamp + 1, performance.now()));
+
+  const latest = {
+    at: 0,
+    hasFace: false,
+    faces: 0,
+    faceScale: 0,
+    coverage: 0,
+    latency: 0,
+    cameraFps: 0,
+    raw: { left: 0, right: 0 },
+    closure: { left: 0, right: 0 },
+    blocked: null,
+    reason: null,
+    closed: false,
+    delegates: { face: null, segmenter: null },
+    cameraSettings: {},
+  };
+
+  // Camera-rate frame counter, for the readout.
+  let frameTicks = 0;
+  let frameWindowStart = 0;
+
+  async function start() {
+    try {
+      camera = await openCamera({ width: 1280, height: 720, frameRate: 30 });
+      latest.cameraSettings = camera.settings;
+      emit("video", camera.video);
+    } catch (error) {
+      console.error("Camera unavailable:", error);
+      emit("error", { message: "Camera unavailable — the painting continues alone.", fatal: true });
+      return;
+    }
+
+    const delegate = flags.delegate === "cpu" ? "CPU" : "GPU";
+    try {
+      const face = await createFaceLandmarker({ delegate });
+      faceLandmarker = face.task;
+      latest.delegates.face = face.delegate;
+
+      const seg = await createSegmenter({ delegate });
+      segmenter = seg.task;
+      latest.delegates.segmenter = seg.delegate;
+    } catch (error) {
+      console.error("Vision models unavailable:", error);
+      emit("error", { message: "Vision models unavailable.", fatal: true });
+      return;
+    }
+
+    running = true;
+    startFastLoop();
+    startSlowLoop();
+  }
+
+  // ---- Loop A: camera rate. A blink is 100-150ms, so this must not be
+  // throttled — at 30fps it yields only 3-4 samples through one blink.
+  function startFastLoop() {
+    const video = camera.video;
+
+    const tick = () => {
+      if (!running) return;
+      try {
+        runFaceFrame(video);
+      } catch (error) {
+        console.error("Face tracking stopped:", error);
+        running = false;
+        emit("error", { message: "Face tracking stopped.", fatal: false });
+        return;
+      }
+      schedule();
+    };
+
+    let lastVideoTime = -1;
+    const schedule = () => {
+      if (video.requestVideoFrameCallback) {
+        video.requestVideoFrameCallback(() => tick());
+      } else {
+        requestAnimationFrame(() => {
+          if (video.currentTime === lastVideoTime) return schedule();
+          lastVideoTime = video.currentTime;
+          tick();
+        });
+      }
+    };
+    schedule();
+  }
+
+  function runFaceFrame(video) {
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+
+    const at = stampFace();
+    const startedAt = performance.now();
+    const results = faceLandmarker.detectForVideo(video, at);
+    const latency = performance.now() - startedAt;
+
+    const points = results.faceLandmarks?.[0] ?? null;
+    const categories = results.faceBlendshapes?.[0]?.categories;
+    const matrix = results.facialTransformationMatrixes?.[0] ?? null;
+    const hasFace = !!points;
+
+    // By name, never by index. The indexes are stable in practice, but a
+    // silent off-by-one here looks like a detection problem for weeks.
+    const rawLeft = scoreByName(categories, "eyeBlinkLeft");
+    const rawRight = scoreByName(categories, "eyeBlinkRight");
+
+    // (d) blink -> the reveal
+    const blink = blinkPipeline.frame({
+      left: rawLeft,
+      right: rawRight,
+      points,
+      matrix,
+      at,
+      hasFace,
+    });
+    if (blink.changed) emit("blink", { closed: blink.closed, at });
+
+    // (e) discovery -> RAW, UNGATED, per-eye. It runs its OWN normalizer
+    // (discovery.js:198); feeding it the already-normalized closure would
+    // normalize twice and silently ruin the squint and hold channels, which
+    // are the two that read absolute levels.
+    discovery.frame({
+      at,
+      left: rawLeft,
+      right: rawRight,
+      hasFace,
+      pose: blink.face,
+    });
+
+    // (f) identity. Judging identity on a turned head produces false swaps,
+    // and a false swap clears the sentence — so reuse the gates' own measure.
+    const visible = blink.face?.visible ?? 0;
+    participant.saw(hasFace && visible >= settings.identityMinVisible ? points : null);
+
+    // (c) eyes + mouth, in canvas space
+    const { width, height } = canvasSize();
+    const featurePoints = hasFace ? mapFaceFeatures(points, video, width, height) : [];
+
+    // (a) the proximity half of engagement
+    const faceScale = hasFace ? faceScaleOf(points) : 0;
+    engagement.updateFace({ hasFace, scale: faceScale, at });
+
+    frameTicks += 1;
+    if (frameWindowStart === 0) frameWindowStart = at;
+    else if (at - frameWindowStart >= 1000) {
+      latest.cameraFps = (frameTicks * 1000) / (at - frameWindowStart);
+      frameTicks = 0;
+      frameWindowStart = at;
+    }
+
+    Object.assign(latest, {
+      at,
+      hasFace,
+      faces: results.faceLandmarks?.length ?? 0,
+      faceScale,
+      latency,
+      raw: { left: rawLeft, right: rawRight },
+      closure: blink.closure,
+      blocked: { ...blinkPipeline.blocked },
+      reason: blink.reason,
+      closed: blink.closed,
+    });
+
+    emit("face", {
+      at,
+      points,
+      featurePoints,
+      hasFace,
+      faceScale,
+      matrix,
+      face: blink.face,
+      raw: latest.raw,
+      closure: blink.closure,
+      latency,
+    });
+  }
+
+  // ---- Loop B: segmentation, throttled. 15fps is plenty for a silhouette.
+  function startSlowLoop() {
+    const video = camera.video;
+    let lastRunAt = 0;
+    let lastVideoTime = -1;
+
+    const tick = (now) => {
+      if (!running) return;
+      requestAnimationFrame(tick);
+
+      if (
+        now - lastRunAt < 1000 / Math.max(1, settings.segmentationFps) ||
+        video.currentTime === lastVideoTime ||
+        video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+      ) {
+        return;
+      }
+      lastRunAt = now;
+      lastVideoTime = video.currentTime;
+
+      try {
+        segmenter.segmentForVideo(video, stampSeg(), (result) => {
+          const confidenceMask = result.confidenceMasks?.[0];
+          if (!confidenceMask) return;
+
+          const built = buildPersonMask(
+            confidenceMask.getAsFloat32Array(),
+            confidenceMask.width,
+            confidenceMask.height,
+            video.videoWidth,
+            video.videoHeight,
+          );
+
+          maskCopy.set(built.mask);
+          latest.coverage = built.coverage;
+
+          engagement.updateCoverage(built.coverage, performance.now());
+          emit("mask", {
+            mask: maskCopy,
+            width: built.width,
+            height: built.height,
+            coverage: built.coverage,
+          });
+        });
+      } catch (error) {
+        console.error("Segmentation stopped:", error);
+        running = false;
+        emit("error", { message: "Segmentation stopped.", fatal: false });
+      }
+    };
+
+    requestAnimationFrame(tick);
+  }
+
+  function reconfigure(key) {
+    if (key === "all" || key.startsWith("blink")) {
+      Object.assign(blinkPipeline.config, mapBlinkSettings(settings));
+    }
+    if (key === "all" || key.startsWith("discovery")) {
+      Object.assign(discovery.config, mapDiscoverySettings(settings));
+    }
+    if (key === "blinkNormalize") blinkPipeline.setNormalize(settings.blinkNormalize);
+  }
+
+  return {
+    start,
+    stop() {
+      running = false;
+      camera?.stop();
+      faceLandmarker?.close();
+      segmenter?.close();
+    },
+    on(event, handler) {
+      const list = listeners.get(event) ?? [];
+      list.push(handler);
+      listeners.set(event, list);
+      return () => listeners.set(event, (listeners.get(event) ?? []).filter((h) => h !== handler));
+    },
+    reconfigure,
+    latest,
+    modelCounts,
+    handles: { blinkPipeline, discovery, participant, engagement },
+  };
+}
+
+function scoreByName(categories, name) {
+  if (!categories) return 0;
+  for (const category of categories) {
+    if (category.categoryName === name) return category.score;
+  }
+  return 0;
+}
+
+function mapBlinkSettings(settings) {
+  return {
+    enter: settings.blinkEnter,
+    exit: settings.blinkExit,
+    lead: settings.blinkLead,
+    smooth: settings.blinkSmooth,
+    slopeSmoothing: settings.blinkSlopeSmoothing,
+    minSpeed: settings.blinkMinSpeed,
+    minVisible: settings.blinkMinVisible,
+    maxTurn: settings.blinkMaxTurn,
+    maxPartialMs: settings.blinkMaxPartialMs,
+    bothEyes: settings.blinkBothEyes,
+    gates: settings.blinkGates,
+  };
+}
+
+function mapDiscoverySettings(settings) {
+  return {
+    suspect: settings.discoverySuspect,
+    discovered: settings.discoveryDiscovered,
+    tauMs: settings.discoveryTauMs,
+    rapidMaxMs: settings.discoveryRapidMaxMs,
+    rapidMinRun: settings.discoveryRapidMinRun,
+    // Left at repo B's default. The state machine resets the determiner
+    // explicitly — when the sentence comes down, and when they leave — so this
+    // is only a backstop for a face that vanishes without the gate noticing.
+  };
+}

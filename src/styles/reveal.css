@@ -1,0 +1,50 @@
+/* Two reveal layers over the painting.
+
+   z-index contract (also see stage.css and debug-panel.css):
+     0   p5 canvas
+     10  #reveal-text    the discovery sentence
+     20  #reveal-image   the eyes-closed full-bleed image
+     30  #debug-panel
+     40  #camera-error
+
+   The image sits ABOVE the text by default, so a blink during the discovered
+   state hides the sentence — this preserves the original piece's "the picture
+   exists only inside the blink". body.text-above-reveal flips the two. */
+
+#reveal-text,
+#reveal-image {
+  position: fixed;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#reveal-text {
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 8vh 10vw;
+  color: #fff;
+  background: #000;
+  font: 400 clamp(24px, 4.6vw, 96px) / 1.25 Georgia, "Times New Roman", serif;
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* No transition, on either layer. The swap is instant, exactly as repo B's
+   eyes-closed piece — a fade would read as an effect rather than as something
+   that was simply there while your eyes were shut. */
+#reveal-image {
+  z-index: 20;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+body.discovered #reveal-text { opacity: 1; }
+body.eyes-closed #reveal-image { opacity: 1; }
+
+body.text-above-reveal #reveal-text { z-index: 20; }
+body.text-above-reveal #reveal-image { z-index: 10; }
