@@ -14,12 +14,15 @@ function harness(overrides = {}) {
     ...overrides,
   };
   const handlers = new Map();
-  const calls = { discoveryResets: 0, forgets: 0 };
+  const calls = { discoveryResets: 0, discoveryRearms: 0, forgets: 0 };
 
   const perception = {
     on: (event, fn) => { const l = handlers.get(event) ?? []; l.push(fn); handlers.set(event, l); },
     handles: {
-      discovery: { reset: () => { calls.discoveryResets += 1; } },
+      discovery: {
+        reset: () => { calls.discoveryResets += 1; },   // forgets the person
+        rearm: () => { calls.discoveryRearms += 1; },   // keeps their calibration
+      },
       participant: { forget: () => { calls.forgets += 1; } },
     },
   };
@@ -67,7 +70,8 @@ console.log('\nThey can earn it again, and again\n');
     ok(`trigger ${round}: and comes back down`,
        h.experience.state === STATE.ENGAGED && h.revealText.shown === false);
   }
-  ok('the determiner was re-armed once per sentence', h.calls.discoveryResets === 3);
+  ok('the determiner was re-armed once per sentence', h.calls.discoveryRearms === 3);
+  ok('and their calibration was never thrown away', h.calls.discoveryResets === 0);
   ok('three triggers were counted in one visit', h.experience.snapshot().triggerCount === 3);
   h.experience.stop();
 }
@@ -82,8 +86,8 @@ console.log('\nWalking away clears it at once\n');
   h.emit('engagement', { engaged: false });
   ok('walking away removes it immediately, with no grace window',
      h.experience.state === STATE.IDLE && h.revealText.shown === false);
-  ok('and everything of theirs is forgotten',
-     h.calls.discoveryResets >= 1 && h.calls.forgets === 1);
+  ok('and everything of theirs is forgotten, calibration included',
+     h.calls.discoveryResets === 1 && h.calls.forgets === 1);
   h.experience.stop();
 }
 {
@@ -137,7 +141,8 @@ console.log('\nBlinking dismisses the sentence\n');
      h.experience.state === STATE.ENGAGED && h.revealText.shown === false);
   ok('the inversion still runs for the length of the blink', h.revealInvert.shown === true);
   ok('and the determiner is re-armed, so they can earn it again',
-     h.calls.discoveryResets === 1);
+     h.calls.discoveryRearms === 1);
+  ok('without making them calibrate again', h.calls.discoveryResets === 0);
 
   h.emit('blink', { closed: false });
   ok('the inversion ends with the blink', h.revealInvert.shown === false);
@@ -178,7 +183,8 @@ console.log('\nBlinking dismisses the sentence\n');
   h.emit('blink', { closed: true });
   ok('blinking while merely engaged changes no state',
      h.experience.state === STATE.ENGAGED);
-  ok('and costs nothing from the determiner', h.calls.discoveryResets === 0);
+  ok('and costs nothing from the determiner',
+     h.calls.discoveryResets === 0 && h.calls.discoveryRearms === 0);
   h.experience.stop();
 }
 

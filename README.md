@@ -74,9 +74,95 @@ the sentence goes with them the instant the engagement gate drops, the determine
 is reset, and whoever is next starts from nothing. The same happens the moment
 identity tracking is confident a different person has walked up.
 
-Re-arming clears that person's blink calibration along with their evidence, which
-only gates the *hold* and *squint* channels — `rapid` is interval-based and needs
-no calibration, so a fresh burst of deliberate blinking re-fires on its own.
+Re-arming keeps the person. `discovery.rearm()` clears the finding, the evidence
+behind it and the rhythm buffers — so the next sentence has to be earned by a
+fresh run rather than paid for by the one just performed — while keeping the eye
+normalizer and the baseline of what their ordinary blink looks like. A full
+`discovery.reset()` is reserved for somebody else walking up, because the
+normalizer's idea of an open eye belongs to the face that taught it.
+
+That distinction is load-bearing: `calibrated()` needs two blinks and four
+seconds, and without it the *hold* and *squint* channels stay silent. Resetting
+between triggers would make the same person re-teach the determiner their face
+every time.
+
+> `rearm()` is the **one** local addition to `src/perception/blink/`, marked in
+> place in `discovery.js`. Everything else in that folder is byte-identical to
+> repo B, which is why `parity-check` and `discovery-sim` still hold.
+
+### Calibration, and the thirty seconds you actually get
+
+`hold` and `squint` read absolute lid levels, so they stay silent until the
+normalizer knows this face. That gate is **two closures plus three seconds**, not
+four blinks — and it is the *closures* that bind, because somebody looking at a
+painting blinks slowly.
+
+| blinks/min | before hold & squint can speak |
+|---:|---:|
+| 6 | 11.4s |
+| 15 | 5.2s |
+| 30 | 3.4s |
+
+Upstream asked for three closures, which at six blinks a minute is **21 seconds** —
+most of a gallery visit, spent waiting. It bought nothing: `shut` is shrunk toward
+the canonical 1.0 with a prior of 6 and keeps refining over a rolling window of
+the last 24 peaks, so the settled estimate is identical whether it started
+believing after one closure or three. `discoveryMinPeaks` only decides when it
+starts, never where it ends up.
+
+**Nothing is gated on calibration except those two channels.** `rapid` is
+interval-based and works from the first two blinks, so a visitor who only ever
+blinks fast is read correctly from the start.
+
+Both levels track continuously for as long as somebody is there: the resting
+level from a rolling 10s window, `shut` from the last 24 closures, both
+recomputed four times a second. A person who leans in or changes the light on
+their face is followed, not stuck with a first impression.
+
+Deliberate tricks are kept out of *discovery's* baseline — what counts as their
+normal blink only learns from closures with at least 1.2s of clear air before
+them, intervals stop learning the moment a run is in progress, and everything
+freezes once the score passes `suspect`, so a burst cannot redefine the normal it
+is being measured against. The **normalizer** has no such notion, by design: a
+squint that never crosses its peak threshold is not recorded as a closure at all,
+and anything that does is one of 24 in a median.
+
+### How much proof it asks for
+
+Every gain is 1.0, which makes each weight readable as **the score one clear
+performance of that signal earns**. At or above the bar, that signal alone is
+enough:
+
+| signal | worth | alone? |
+|---|---:|---|
+| eyes held shut (1s) | 0.88 | yes |
+| rapid blinking | 0.85 | yes |
+| one eye | 0.82 | yes |
+| a held squint | 0.78 | yes |
+| blinks unlike their own | 0.55 | corroboration only |
+
+Upstream, only rapid blinking could do it alone: a two-second eye-hold reached
+0.64 and stopped, and squint's ceiling of 0.65 put it permanently out of reach.
+Requiring two different kinds of trickery was an assumption, not a finding —
+somebody who works it out may only ever do the one thing.
+
+A held squint was worse than under-weighted: it scored **nothing at all**.
+`closeEnter` (0.5) sat inside `squintBand` (0.42–0.88), so a squint at 0.58 was
+recorded as the eyes having CLOSED, which switches off the parked-squint
+detector — and the closure then fell through every branch, being too long for a
+blink, too shallow for a hold and too abrupt for a slow onset. The two bands are
+now separated: a closure is the eyes actually going shut (0.9), and anything
+parked below 0.86 for long enough is a squint.
+
+**Second time onward** the bar drops from 0.70 to `discoveryRetrigger` (0.55):
+they demonstrated it a moment ago and are plainly doing it again on purpose, and
+holding them to the same standard twice reads as the machine having forgotten.
+0.55 is measured, not chosen — across 98 simulated ordinary visitor-minutes the
+highest anyone reached without trying anything was 0.51, and 0.55 is the lowest
+bar that never fired on them (0.50 fires on 1%, 0.45 on 2%, 0.40 on 3%).
+
+`scripts/pipeline-check.js` holds both halves of the bargain: every signal alone
+is enough, and nobody merely blinking is ever accused.
 
 ## Structure
 

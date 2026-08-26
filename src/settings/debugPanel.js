@@ -285,6 +285,25 @@ const NUMBER_CONTROLS = [
   { key: "discoveryTauMs", label: "Evidence half-life (ms)", min: 5000, max: 120000, step: 1000, section: "discovery" },
   { key: "discoveryRapidMaxMs", label: "Rapid blink gap ceiling (ms)", min: 200, max: 3000, step: 50, section: "discovery" },
   { key: "discoveryRapidMinRun", label: "Rapid run minimum", min: 1, max: 6, step: 1, section: "discovery" },
+  { key: "discoveryRetrigger", label: "Bar, second time onward", min: 0, max: 1, step: 0.01, section: "discovery" },
+
+  // One clear performance of a signal earns its weight, so a weight at or above
+  // the "discovered" bar means that signal alone is enough.
+  { key: "discoveryWeightRapid", label: "Worth: rapid blinking", min: 0, max: 1, step: 0.01, section: "discovery" },
+  { key: "discoveryWeightHold", label: "Worth: eyes held shut", min: 0, max: 1, step: 0.01, section: "discovery" },
+  { key: "discoveryWeightWink", label: "Worth: one eye", min: 0, max: 1, step: 0.01, section: "discovery" },
+  { key: "discoveryWeightSquint", label: "Worth: held squint", min: 0, max: 1, step: 0.01, section: "discovery" },
+  { key: "discoveryWeightShape", label: "Worth: odd-shaped blinks", min: 0, max: 1, step: 0.01, section: "discovery" },
+
+  { key: "discoveryHoldMinMs", label: "Hold counts from (ms)", min: 100, max: 3000, step: 50, section: "discovery" },
+  { key: "discoveryHoldFullMs", label: "Hold full worth at (ms)", min: 200, max: 5000, step: 50, section: "discovery" },
+  { key: "discoveryMinPeaks", label: "Closures before eyes are known", min: 1, max: 6, step: 1, section: "discovery" },
+  { key: "discoveryCalibrationMs", label: "Shortest time before judging (ms)", min: 500, max: 15000, step: 250, section: "discovery" },
+  { key: "discoveryCalibrationBlinks", label: "Blinks before judging", min: 1, max: 6, step: 1, section: "discovery" },
+  { key: "discoveryCloseEnter", label: "Counts as shut above", min: 0.3, max: 1.2, step: 0.01, section: "discovery" },
+  { key: "discoveryCloseExit", label: "Counts as open below", min: 0.1, max: 1, step: 0.01, section: "discovery" },
+  { key: "discoverySquintBandLow", label: "Squint band low", min: 0, max: 1, step: 0.01, section: "discovery" },
+  { key: "discoverySquintBandHigh", label: "Squint band high", min: 0, max: 1, step: 0.01, section: "discovery" },
 
   // session
   { key: "lingerMs", label: "Sentence lingers (ms)", min: 0, max: 60000, step: 250, section: "session" },

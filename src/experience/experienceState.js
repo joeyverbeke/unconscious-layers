@@ -60,7 +60,12 @@ export function createExperience({ settings, perception, painting, revealInvert,
         // Coming back down from the sentence, re-arm the determiner so they can
         // earn it again. It fires once per armed cycle and stays latched, so
         // without this the sentence could never return while they stood there.
-        if (from === STATE.DISCOVERED) discovery.reset();
+        //
+        // rearm(), not reset(): this is the SAME person still standing there.
+        // reset() would throw away their eye calibration and their baseline,
+        // and they would have to spend two blinks and four seconds teaching the
+        // determiner their face again before it could read a hold or a squint.
+        if (from === STATE.DISCOVERED) discovery.rearm();
         break;
 
       case STATE.DISCOVERED:
@@ -72,6 +77,8 @@ export function createExperience({ settings, perception, painting, revealInvert,
     }
   }
 
+  // Somebody else's turn. THIS is where a full reset belongs — the normalizer's
+  // idea of an open eye belongs to the face that taught it.
   function forgetParticipant() {
     discovery.reset();
     participant.forget("left");
@@ -110,6 +117,7 @@ export function createExperience({ settings, perception, painting, revealInvert,
     // Blinking dismisses the sentence, and it goes on the eyes CLOSING rather
     // than opening — so it is already gone when they can see again, and the
     // question is answered by the way it leaves.
+
     if (closed && state === STATE.DISCOVERED) go(STATE.ENGAGED);
   });
 

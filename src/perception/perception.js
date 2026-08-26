@@ -6,6 +6,7 @@ import { createBlinkPipeline } from "./blinkPipeline.js";
 import { createDiscovery } from "./blink/discovery.js";
 import { createParticipant } from "./participant.js";
 import { createEngagement } from "../experience/engagement.js";
+import { mapBlinkSettings, mapDiscoverySettings } from "./tuning.js";
 
 /**
  * One camera, one ImageSegmenter, one FaceLandmarker.
@@ -296,12 +297,57 @@ export function createPerception({ settings, flags, canvasSize }) {
     requestAnimationFrame(tick);
   }
 
+  // The determiner, with the bar moved according to whether this person has
+  // already shown they know.
+  //
+  // The first finding has to be convincing: nobody has proved anything yet.
+  // The second does not — they demonstrated it a moment ago and are plainly
+  // doing it again on purpose. Holding them to the same standard twice reads,
+  // from where they stand, as the machine having forgotten.
+  //
+  // config is mutable by design (that is how the debug panel tunes it live),
+  // so this needs no further change to discovery.js.
+  let barLowered = false;
+
+  const applyBar = () => {
+    discovery.config.discovered = barLowered
+      ? settings.discoveryRetrigger
+      : settings.discoveryDiscovered;
+  };
+
+  const discoveryHandle = {
+    frame: (input) => discovery.frame(input),
+    report: () => discovery.report(),
+    onDiscovered: (listener) => discovery.onDiscovered(listener),
+    get config() { return discovery.config; },
+    get barLowered() { return barLowered; },
+
+    // Same person, still standing there.
+    rearm() {
+      discovery.rearm();
+      barLowered = true;
+      applyBar();
+    },
+
+    // Somebody else's turn — the bar goes back up with everything else.
+    reset() {
+      discovery.reset();
+      barLowered = false;
+      applyBar();
+    },
+  };
+
   function reconfigure(key) {
     if (key === "all" || key.startsWith("blink")) {
       Object.assign(blinkPipeline.config, mapBlinkSettings(settings));
     }
     if (key === "all" || key.startsWith("discovery")) {
       Object.assign(discovery.config, mapDiscoverySettings(settings));
+      // mapDiscoverySettings always writes the full-strength bar, so put the
+      // lowered one back if this person has already earned it. Without this,
+      // touching any panel control mid-session would quietly raise the bar
+      // again under somebody who had already shown they know.
+      applyBar();
     }
     if (key === "blinkNormalize") blinkPipeline.setNormalize(settings.blinkNormalize);
   }
@@ -323,7 +369,7 @@ export function createPerception({ settings, flags, canvasSize }) {
     reconfigure,
     latest,
     modelCounts,
-    handles: { blinkPipeline, discovery, participant, engagement },
+    handles: { blinkPipeline, discovery: discoveryHandle, participant, engagement },
   };
 }
 
@@ -333,33 +379,4 @@ function scoreByName(categories, name) {
     if (category.categoryName === name) return category.score;
   }
   return 0;
-}
-
-function mapBlinkSettings(settings) {
-  return {
-    enter: settings.blinkEnter,
-    exit: settings.blinkExit,
-    lead: settings.blinkLead,
-    smooth: settings.blinkSmooth,
-    slopeSmoothing: settings.blinkSlopeSmoothing,
-    minSpeed: settings.blinkMinSpeed,
-    minVisible: settings.blinkMinVisible,
-    maxTurn: settings.blinkMaxTurn,
-    maxPartialMs: settings.blinkMaxPartialMs,
-    bothEyes: settings.blinkBothEyes,
-    gates: settings.blinkGates,
-  };
-}
-
-function mapDiscoverySettings(settings) {
-  return {
-    suspect: settings.discoverySuspect,
-    discovered: settings.discoveryDiscovered,
-    tauMs: settings.discoveryTauMs,
-    rapidMaxMs: settings.discoveryRapidMaxMs,
-    rapidMinRun: settings.discoveryRapidMinRun,
-    // Left at repo B's default. The state machine resets the determiner
-    // explicitly — when the sentence comes down, and when they leave — so this
-    // is only a backstop for a face that vanishes without the gate noticing.
-  };
 }

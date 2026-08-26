@@ -78,9 +78,74 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // ---- discovery (step 5) -------------------------------------------------
   discoverySuspect: 0.35,
   discoveryDiscovered: 0.7,
+  // Once they have shown they know, asking for as much proof a second time is
+  // asking them to convince a machine that is already convinced. Applied by
+  // perception.js the moment the determiner is re-armed.
+  // 0.55, not lower, and the number is measured rather than chosen: across 98
+  // simulated ordinary visitor-minutes the highest score anyone reached WITHOUT
+  // trying anything was 0.51. A bar of 0.50 fires on 1% of ordinary visitors,
+  // 0.45 on 2%, 0.40 on 3%; 0.55 is the lowest bar that never did.
+  discoveryRetrigger: 0.55,
   discoveryTauMs: 25000,
   discoveryRapidMaxMs: 900,
   discoveryRapidMinRun: 2,
+
+  // Every gain is 1.0 (set in perception.js), which makes these weights mean
+  // something you can hold in your head: THE SCORE ONE CLEAR PERFORMANCE OF
+  // THAT SIGNAL EARNS. Above discoveryDiscovered, that signal alone is enough.
+  //
+  // Upstream, only rapid blinking could do that: a two-second eye-hold reached
+  // 0.64 and stopped, and squint's ceiling was 0.65, so no amount of squinting
+  // could ever have been enough on its own. Requiring two different kinds of
+  // trickery was an assumption, not a finding — somebody who works it out may
+  // only ever do the one thing.
+  //
+  // shape stays deliberately below the bar: blinking unlike your own baseline
+  // is corroboration, not intent.
+  discoveryWeightRapid: 0.85,
+  discoveryWeightHold: 0.88,
+  discoveryWeightWink: 0.82,
+  discoveryWeightSquint: 0.78,
+  discoveryWeightShape: 0.55,
+
+  // One second of eyes held shut is a deliberate act, and plenty. Upstream
+  // asked for two seconds to count fully.
+  discoveryHoldMinMs: 500,
+  discoveryHoldFullMs: 1000,
+
+  // DO NOT RAISE closeEnter to separate closures from squints. It looks like
+  // the obvious fix and it silently destroys the piece: normalize.js shrinks a
+  // person's "shut" toward the canonical 1.0 with a prior of 6, so a face whose
+  // raw eyeBlink tops out below ~0.95 never produces a normalized closure that
+  // high. At closeEnter 0.9 a thirty-second visit counted ZERO blinks for every
+  // face except the one that happened to read 0.95 — and with no blinks there
+  // is no calibration, no baseline, and no rapid channel either.
+  //
+  // A closure and a squint are told apart by DURATION AND DEPTH, not by level:
+  // a closure that outlasts a blink but never gets near shut is a squint. That
+  // branch lives in discovery.js, marked in place.
+  // HOW SOON hold and squint are allowed to speak. They read absolute lid
+  // levels, so they stay silent until the normalizer knows this face — and in a
+  // gallery you are lucky to get thirty seconds. Upstream wanted three separate
+  // closures before it would believe a "shut" level, which at six blinks a
+  // minute is 21 seconds: most of the visit, spent waiting.
+  //
+  // It buys nothing. shut is shrunk toward the canonical 1.0 with a prior of 6
+  // and keeps refining over a rolling window of the last 24 peaks, so the
+  // SETTLED estimate is identical whether it started believing after one
+  // closure or three — minPeaks only decides when it starts, not where it ends
+  // up. Two keeps a little protection against a single freak closure defining
+  // the face, and halves the wait to ~11s at six blinks a minute.
+  discoveryMinPeaks: 2,
+  discoveryCalibrationMs: 3000,
+  discoveryCalibrationBlinks: 2,
+
+  discoveryCloseEnter: 0.5,
+  discoveryCloseExit: 0.35,
+  // The parked detector only runs while NOT already in a closure, so its band
+  // belongs below closeEnter: it catches the shallow squint that never crosses.
+  discoverySquintBandLow: 0.28,
+  discoverySquintBandHigh: 0.48,
 
   // ---- session (step 6) ---------------------------------------------------
   // With the timer on, the sentence clears on whichever comes first: lingerMs

@@ -1,5 +1,9 @@
 // Working out that someone has worked it out.
 //
+// NOTE: this file is repo B's discovery.js with ONE local addition, rearm(),
+// marked in place below. Nothing else is changed, so scripts/discovery-sim.js
+// and scripts/parity-check.js still hold.
+//
 // Somebody standing in front of one of these pieces goes through a fairly
 // reliable arc: they blink, something changes, they are not sure it changed,
 // and then they start experimenting on the machine to find out. The point of
@@ -106,6 +110,10 @@ export const DEFAULTS = {
   closeExit: 0.35,
 
   blinkMaxMs: 600,      // longer than this is not a blink, it is a hold
+  // LOCAL ADDITION: the slow-onset squint ramp, previously hardcoded as
+  // (duration - 400) / 1200. These defaults reproduce that exactly.
+  squintMinMs: 400,
+  squintFullMs: 1600,
   holdMinMs: 700,
   holdFullMs: 2000,     // a hold this long is as much evidence as a hold can be
 
@@ -195,7 +203,12 @@ export function createDiscovery(overrides = {}) {
 
   // Their own scale: 0 is this person's eye open, 1 their eye shut. Declared
   // before reset(), which clears it along with everything else.
-  const normalizer = createEyeNormalizer();
+  // LOCAL CHANGE (not in repo B): pass the normalizer's own thresholds through,
+  // so the piece can reach them. Upstream called this with no arguments, which
+  // left minPeaks — the thing that actually decides how long somebody has to
+  // stand there before hold and squint can speak — unreachable from config.
+  // Defaults are unchanged when nothing is supplied.
+  const normalizer = createEyeNormalizer(config.normalizer ?? {});
 
   let state;
 
@@ -229,6 +242,7 @@ export function createDiscovery(overrides = {}) {
       // What open and shut mean for this particular face, per eye.
       poseOk: true,
 
+      baselineFrozen: false,
       evidence: { rapid: 0, shape: 0, hold: 0, wink: 0, squint: 0 },
       detail: {
         rapid: 'no run', shape: 'nothing unusual',
@@ -245,6 +259,64 @@ export function createDiscovery(overrides = {}) {
       discoveredAt: null,
       blinks: 0,
     };
+  }
+
+  // ---------------------------------------------------------------------
+  // LOCAL ADDITION (not in repo B's blink/ folder) — see the note at the
+  // top of this file. Everything else here is byte-identical upstream.
+  // ---------------------------------------------------------------------
+  //
+  // Clear the finding without forgetting the person.
+  //
+  // reset() is for somebody ELSE walking up: it drops the normalizer's idea of
+  // what this face's open and shut eyes look like, along with everything
+  // learned about how they normally blink. That is right for a new participant
+  // and wrong for the same one — after the sentence comes down, using reset()
+  // would make them recalibrate from nothing before hold and squint could
+  // speak again, and calibrated() needs two blinks and four seconds to come
+  // back.
+  //
+  // rearm() keeps what is theirs — the eye normalizer, the baseline of what
+  // their ordinary blink looks like, their blink count and the clock that
+  // calibration is measured against — and clears only the verdict and the
+  // evidence it rested on. The rhythm buffers go too, so the next finding has
+  // to be earned by a fresh run rather than paid for by the one just
+  // performed.
+  function rearm() {
+    // Their ordinary blink rate is established, and everything from here is
+    // deliberate. Without this the next burst teaches its own gaps as their
+    // normal rate: baselineIbi collapses toward 400ms, the rapid ceiling
+    // (half of it) drops below any human blink interval, and rapid can never
+    // fire again for the rest of their visit.
+    state.baselineFrozen = true;
+    state.evidence = { rapid: 0, shape: 0, hold: 0, wink: 0, squint: 0 };
+    state.detail = {
+      rapid: 'no run', shape: 'nothing unusual',
+      hold: 'none', wink: 'none', squint: 'none',
+    };
+
+    // The run they just performed must not pay for the next one.
+    state.blinkStarts = [];
+    state.recentGaps = [];
+    state.volitions = [];
+    state.rapidBest = 0;
+    state.rapidNow = null;
+    state.shapeNow = null;
+
+    // The armed-once channels become available again.
+    state.winkArmed = true;
+    state.shapeArmed = true;
+    state.inBand = 0;
+    state.winkFor = 0;
+
+    // And the verdict itself.
+    state.score = 0;
+    state.peakScore = 0;
+    state.level = 'observing';
+    state.discovered = false;
+    state.discoveredAt = null;
+    state.log = [];
+    note(state.lastAt ?? 0, 're-armed, calibration kept');
   }
   reset();
 
@@ -515,7 +587,17 @@ export function createDiscovery(overrides = {}) {
         if (slowOnset && duration >= 400 && !lopsided) {
           // Crept there rather than blinked there. The level it reached does not
           // matter; a squint that settles above the threshold is still a squint.
-          const strength = clamp((duration - 400) / 1200, 0.4, 1);
+          // LOCAL CHANGE: was clamp((duration - 400) / 1200, ...), an independent
+          // ramp needing ~1.6s to count fully. It now shares the hold ramp, so
+          // "a second of deliberate eyes-closed is enough" holds whichever way
+          // the closure got there — crept or snapped. Without this, a soft
+          // onset scored 0.42 and never triggered on its own; it only ever
+          // worked by compounding across attempts, which re-arming ends.
+          const strength = clamp(
+            (duration - config.squintMinMs) / (config.squintFullMs - config.squintMinMs),
+            0.4,
+            1
+          );
           raise('squint', strength, at, `crept shut and held ${(duration / 1000).toFixed(1)}s`);
           state.detail.squint = `slow closure, ${(duration / 1000).toFixed(1)}s`;
         } else if (duration >= config.holdMinMs) {
@@ -531,6 +613,30 @@ export function createDiscovery(overrides = {}) {
             );
             raise('hold', strength, at, `eyes shut for ${(duration / 1000).toFixed(1)}s`);
             state.detail.hold = `last hold ${(duration / 1000).toFixed(1)}s`;
+          } else if (levelsTrustworthy && !lopsided) {
+            // ---------------------------------------------------------------
+            // LOCAL ADDITION (not in repo B) — the branch nothing fell into.
+            //
+            // Held longer than any blink, but never near enough to shut to be
+            // a hold. Upstream this produced no evidence at all: too long for
+            // the blink branch, too shallow for the hold branch, too abrupt
+            // for the slow-onset branch. A deliberate squint that crossed
+            // closeEnter simply vanished, so no amount of squinting could
+            // ever count for anything.
+            //
+            // DEPTH is what separates it from a hold; DURATION is what
+            // separates it from a blink. Level alone cannot do it — see the
+            // note on closeEnter in settings/defaults.js.
+            // ---------------------------------------------------------------
+            const strength = clamp(
+              (duration - config.holdMinMs) / (config.holdFullMs - config.holdMinMs),
+              0.4,
+              1
+            );
+            raise('squint', strength, at,
+              `held ${Math.round(state.closurePeak * 100)}% shut for ${(duration / 1000).toFixed(1)}s`);
+            state.detail.squint =
+              `${(duration / 1000).toFixed(1)}s at ${Math.round(state.closurePeak * 100)}%`;
           } else {
             state.detail.hold = !calibrated()
               ? 'waiting to learn their eyes'
@@ -561,7 +667,7 @@ export function createDiscovery(overrides = {}) {
           // down, tightens the ceiling and breaks the very run being measured —
           // the longer someone blinks, the less it would count. Two gaps slip in
           // before a run is recognised, which a median absorbs.
-          if (previous !== undefined && learning() && state.rapidBest === 0) {
+          if (previous !== undefined && learning() && state.rapidBest === 0 && !state.baselineFrozen) {
             const gap = state.closureStart - previous;
             // Intervals still learn from everything in a sane range — the median
             // is what makes "their own rate" meaningful, and a burst of five
@@ -659,6 +765,7 @@ export function createDiscovery(overrides = {}) {
     frame,
     report,
     reset,
+    rearm,
     config,
     onDiscovered: (listener) => listeners.push(listener),
   };
