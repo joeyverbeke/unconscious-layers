@@ -77,8 +77,8 @@ const BOOLEAN_CONTROLS = [
   { key: "blinkGates", label: "Gates (reject squints/turns)", section: "blink" },
   { key: "blinkBothEyes", label: "Require both eyes", section: "blink" },
   { key: "blinkNormalize", label: "Normalize per person", section: "blink" },
-  { key: "revealImageEnabled", label: "Blink reveal image", section: "visibility" },
-  { key: "textAboveReveal", label: "Sentence above reveal image", section: "visibility" },
+  { key: "blinkInvertEnabled", label: "Invert on blink", section: "visibility" },
+  { key: "lingerTimerEnabled", label: "Sentence lingers timer", section: "session" },
   { key: "rotatedSquares", label: "Rotate square marks", section: "performance" },
 ];
 
@@ -318,6 +318,9 @@ export function loadSettings(defaults) {
 
     if (isHexColor(saved.backgroundColor)) {
       settings.backgroundColor = saved.backgroundColor;
+    }
+    if (isHexColor(saved.revealTextColor)) {
+      settings.revealTextColor = saved.revealTextColor;
     }
     if (
       Array.isArray(saved.colors) &&
@@ -629,7 +632,23 @@ export function createDebugPanel({ settings, defaults, onChange }) {
     onChange("backgroundColor");
   });
   backgroundField.append(backgroundLabel, backgroundInput);
-  sectionMountByKey.get("palette").append(backgroundField, colorSection);
+
+  const revealTextField = document.createElement("label");
+  revealTextField.className = "debug-field debug-field--color";
+  const revealTextLabel = document.createElement("span");
+  revealTextLabel.textContent = "Sentence (negative)";
+  const revealTextInput = document.createElement("input");
+  revealTextInput.type = "color";
+  revealTextInput.name = "revealTextColor";
+  revealTextInput.value = settings.revealTextColor;
+  revealTextInput.addEventListener("input", () => {
+    settings.revealTextColor = revealTextInput.value;
+    persistSettings(settings);
+    onChange("revealTextColor");
+  });
+  revealTextField.append(revealTextLabel, revealTextInput);
+
+  sectionMountByKey.get("palette").append(backgroundField, revealTextField, colorSection);
 
   const refreshPaletteOptions = (preferredName = "") => {
     const names = Object.keys(savedPalettes).sort((a, b) =>
@@ -658,6 +677,7 @@ export function createDebugPanel({ settings, defaults, onChange }) {
       colorInputs[index].value = color;
     });
     backgroundInput.value = settings.backgroundColor;
+    revealTextInput.value = settings.revealTextColor;
   };
 
   savePaletteButton.addEventListener("click", () => {

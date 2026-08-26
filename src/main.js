@@ -5,7 +5,7 @@ import { createDebugPanel, loadSettings, clearSavedSettings } from "./settings/d
 import { createPainting } from "./painting/painting.js";
 import { createPerception } from "./perception/perception.js";
 import { createExperience, STATE } from "./experience/experienceState.js";
-import { createRevealImage } from "./experience/revealImage.js";
+import { createRevealInvert } from "./experience/revealInvert.js";
 import { createRevealText } from "./experience/revealText.js";
 
 // Must happen before loadSettings, or the saved blob wins again.
@@ -35,6 +35,7 @@ debugPanel = createDebugPanel({
   onChange: (key) => {
     painting.handleSettingsChange(key);
     perception.reconfigure(key);
+    if (key === "revealTextColor" || key === "all") revealText.applyColor();
   },
 });
 
@@ -53,14 +54,14 @@ perception.on("error", ({ message }) => {
 });
 
 // ---- the experience --------------------------------------------------------
-const revealImage = createRevealImage({ settings });
+const revealInvert = createRevealInvert({ settings });
 const revealText = createRevealText({ settings });
 
 const experience = createExperience({
   settings,
   perception,
   painting,
-  revealImage,
+  revealInvert,
   revealText,
   flags,
 });
@@ -141,7 +142,7 @@ if (import.meta.env.DEV) {
     __perception: perception,
     __experience: experience,
     __settings: settings,
-    __revealImage: revealImage,
+    __revealInvert: revealInvert,
     __revealText: revealText,
     STATE,
   });

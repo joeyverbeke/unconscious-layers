@@ -83,6 +83,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   discoveryRapidMinRun: 2,
 
   // ---- session (step 6) ---------------------------------------------------
+  // With the timer on, the sentence clears on whichever comes first: lingerMs
+  // elapsing, or a blink. With it off, only a blink clears it.
+  lingerTimerEnabled: true,
   // How long the sentence stays on screen, with the participant still there.
   // Then they are handed back to being drawn, and the determiner is re-armed,
   // so deliberate blinking can summon the sentence again for as long as they
@@ -94,8 +97,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   identityMinVisible: 0.55,
 
   // ---- reveal -------------------------------------------------------------
-  revealImageEnabled: true,
-  textAboveReveal: false,
+  // The blink inverts the whole screen; the sentence is cut into the painting
+  // as a negative. Both are compositor-only — see src/styles/reveal.css.
+  blinkInvertEnabled: true,
+  revealTextColor: "#7d5fa8",
   eyesClosedWatchdogMs: 3000,
 
   // ---- performance --------------------------------------------------------

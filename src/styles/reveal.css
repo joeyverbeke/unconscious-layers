@@ -1,50 +1,78 @@
-/* Two reveal layers over the painting.
+/* Two reveal layers over the painting. Neither touches the painting loop and
+   neither reads a pixel in JavaScript: both are single GPU compositing
+   operations, so they cost the same whether the canvas holds 5,000 marks or
+   50,000.
 
-   z-index contract (also see stage.css and debug-panel.css):
+   z-index contract (see also stage.css and debug-panel.css):
      0   p5 canvas
-     10  #reveal-text    the discovery sentence
-     20  #reveal-image   the eyes-closed full-bleed image
+     10  #reveal-text     the discovery sentence, blended as a negative
+     20  #reveal-invert   the blink inversion, above everything it inverts
      30  #debug-panel
-     40  #camera-error
-
-   The image sits ABOVE the text by default, so a blink during the discovered
-   state hides the sentence — this preserves the original piece's "the picture
-   exists only inside the blink". body.text-above-reveal flips the two. */
+     40  #camera-error */
 
 #reveal-text,
-#reveal-image {
+#reveal-invert {
   position: fixed;
   inset: 0;
   opacity: 0;
   pointer-events: none;
 }
 
+/* THE BLINK.
+   A white plane in `difference` is an exact inversion: |backdrop - 255| is
+   255 - backdrop, per channel. Compositor-only — cheaper and steadier than
+   `filter: invert()` on the canvas element, which on some drivers pulls a
+   frequently-redrawn canvas out of accelerated compositing.
+
+   It sits ABOVE the sentence, so a blink inverts that too — everything
+   inverts, which is the point. */
+#reveal-invert {
+  z-index: 20;
+  background: #fff;
+  mix-blend-mode: difference;
+}
+
+/* THE SENTENCE.
+   Not a panel laid over the painting but a negative cut into it: `difference`
+   against the painting means the letters read as this colour over the dark
+   ground and flip to its complement wherever a pale mark passes underneath, so
+   the painting keeps moving through the type. */
 #reveal-text {
   z-index: 10;
   display: flex;
   align-items: center;
-  justify-content: center;
   margin: 0;
-  padding: 8vh 10vw;
-  color: #fff;
-  background: #000;
-  font: 400 clamp(24px, 4.6vw, 96px) / 1.25 Georgia, "Times New Roman", serif;
-  text-align: center;
-  text-wrap: balance;
+  padding: 2vh 1.5vw;
+  color: var(--reveal-text-color, #7d5fa8);
+  mix-blend-mode: difference;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  font-weight: 400;
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  hyphens: none;
+  overflow: hidden;
+
+  /* Every line flush to both edges, the last one included.
+     text-align-last carries the rule to the final line; inter-character then
+     lets a line stretch on letter gaps as well as word gaps, which is the only
+     way a single-word last line ("ourselves?") can reach the right edge.
+     Chromium honours inter-character; where it is unsupported the last line
+     simply falls back to its natural width. */
+  text-align: justify;
+  text-align-last: justify;
+  text-justify: inter-character;
 }
 
-/* No transition, on either layer. The swap is instant, exactly as repo B's
-   eyes-closed piece — a fade would read as an effect rather than as something
-   that was simply there while your eyes were shut. */
-#reveal-image {
-  z-index: 20;
+/* The size is measured, not guessed: revealText.js grows the type until it is
+   about to overflow, so the sentence always fills the screen without clipping
+   whatever the wording or the display. */
+#reveal-text > span {
+  display: block;
   width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 
+/* No transition on either. The swap is instant, exactly as repo B's
+   eyes-closed piece — a fade would read as an effect rather than as something
+   that was simply true while your eyes were shut. */
 body.discovered #reveal-text { opacity: 1; }
-body.eyes-closed #reveal-image { opacity: 1; }
-
-body.text-above-reveal #reveal-text { z-index: 20; }
-body.text-above-reveal #reveal-image { z-index: 10; }
+body.eyes-closed #reveal-invert { opacity: 1; }

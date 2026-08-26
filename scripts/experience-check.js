@@ -10,8 +10,8 @@ const ok = (label, condition, detail = '') => {
 
 function harness(overrides = {}) {
   const settings = {
-    lingerMs: 5000, swapCooldownMs: 400, eyesClosedWatchdogMs: 3000,
-    textAboveReveal: false, ...overrides,
+    lingerMs: 5000, lingerTimerEnabled: true, swapCooldownMs: 400, eyesClosedWatchdogMs: 3000,
+    ...overrides,
   };
   const handlers = new Map();
   const calls = { discoveryResets: 0, forgets: 0 };
@@ -27,10 +27,10 @@ function harness(overrides = {}) {
 
   const painting = { engaged: false, setEngaged(v) { this.engaged = v; } };
   const revealText = { shown: false, show() { this.shown = true; }, hide() { this.shown = false; }, applyStacking() {} };
-  const revealImage = { shown: false, set(v) { this.shown = v; } };
+  const revealInvert = { shown: false, set(v) { this.shown = v; } };
 
-  const experience = createExperience({ settings, perception, painting, revealImage, revealText });
-  return { experience, emit, painting, revealText, revealImage, calls, settings };
+  const experience = createExperience({ settings, perception, painting, revealInvert, revealText });
+  return { experience, emit, painting, revealText, revealInvert, calls, settings };
 }
 
 console.log('\nThe arc: idle -> engaged -> discovered -> back to engaged\n');
@@ -125,24 +125,81 @@ console.log('\nSomebody else walks up\n');
   h.experience.stop();
 }
 
+console.log('\nBlinking dismisses the sentence\n');
+{
+  const h = harness({ lingerMs: 60000 });
+  h.emit('engagement', { engaged: true });
+  h.emit('discovery', { report: {} });
+  ok('the sentence is up', h.revealText.shown === true);
+
+  h.emit('blink', { closed: true });
+  ok('it goes the moment their eyes close, not when they open',
+     h.experience.state === STATE.ENGAGED && h.revealText.shown === false);
+  ok('the inversion still runs for the length of the blink', h.revealInvert.shown === true);
+  ok('and the determiner is re-armed, so they can earn it again',
+     h.calls.discoveryResets === 1);
+
+  h.emit('blink', { closed: false });
+  ok('the inversion ends with the blink', h.revealInvert.shown === false);
+
+  h.emit('discovery', { report: {} });
+  ok('and it can indeed be earned again', h.revealText.shown === true);
+  h.experience.stop();
+}
+{
+  // Timer OFF: only a blink clears it.
+  const h = harness({ lingerTimerEnabled: false, lingerMs: 1000 });
+  h.emit('engagement', { engaged: true });
+  h.emit('discovery', { report: {} });
+
+  h.experience.tick(performance.now() + 600000);
+  ok('with the timer off the sentence waits, however long',
+     h.experience.state === STATE.DISCOVERED && h.revealText.shown === true);
+
+  h.emit('blink', { closed: true });
+  ok('and a blink is what takes it away',
+     h.experience.state === STATE.ENGAGED && h.revealText.shown === false);
+  h.experience.stop();
+}
+{
+  // Timer ON: whichever comes first.
+  const h = harness({ lingerTimerEnabled: true, lingerMs: 5000 });
+  h.emit('engagement', { engaged: true });
+  h.emit('discovery', { report: {} });
+  h.experience.tick(performance.now() + 6000);
+  ok('with the timer on it also clears on its own',
+     h.experience.state === STATE.ENGAGED && h.revealText.shown === false);
+  h.experience.stop();
+}
+{
+  // A blink outside the sentence must not be mistaken for a dismissal.
+  const h = harness();
+  h.emit('engagement', { engaged: true });
+  h.emit('blink', { closed: true });
+  ok('blinking while merely engaged changes no state',
+     h.experience.state === STATE.ENGAGED);
+  ok('and costs nothing from the determiner', h.calls.discoveryResets === 0);
+  h.experience.stop();
+}
+
 console.log('\nThe blink overlay is orthogonal to the state\n');
 {
   const h = harness();
   h.emit('engagement', { engaged: true });
   h.emit('discovery', { report: {} });
   h.emit('blink', { closed: true });
-  ok('a blink while the sentence is up shows both, and changes no state',
-     h.experience.state === STATE.DISCOVERED && h.revealImage.shown === true && h.revealText.shown === true);
+  ok('the inversion runs and the sentence is dismissed together',
+     h.revealInvert.shown === true && h.revealText.shown === false);
 
   h.emit('blink', { closed: false });
-  ok('and it comes straight back down', h.revealImage.shown === false);
+  ok('and the inversion comes straight back down', h.revealInvert.shown === false);
   h.experience.stop();
 }
 {
   const h = harness();
   h.emit('blink', { closed: true });
   ok('the reveal does not arm while idle',
-     h.revealImage.shown === false && h.experience.eyesClosed === false);
+     h.revealInvert.shown === false && h.experience.eyesClosed === false);
   h.experience.stop();
 }
 {
@@ -152,7 +209,7 @@ console.log('\nThe blink overlay is orthogonal to the state\n');
   ok('eyes are closed while engaged', h.experience.eyesClosed === true);
   // Detector wedged: the watchdog is the belt to the detector's braces.
   h.experience.tick(performance.now() + 4000);
-  ok('the watchdog takes a stuck image down', h.experience.eyesClosed === false && h.revealImage.shown === false);
+  ok('the watchdog takes a stuck image down', h.experience.eyesClosed === false && h.revealInvert.shown === false);
   h.experience.stop();
 }
 {
@@ -161,7 +218,7 @@ console.log('\nThe blink overlay is orthogonal to the state\n');
   h.emit('blink', { closed: true });
   h.emit('engagement', { engaged: false });
   ok('leaving mid-blink takes the image down with it',
-     h.experience.state === STATE.IDLE && h.revealImage.shown === false);
+     h.experience.state === STATE.IDLE && h.revealInvert.shown === false);
   h.experience.stop();
 }
 

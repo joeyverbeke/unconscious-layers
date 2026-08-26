@@ -33,8 +33,35 @@ only — never over the LAN IP.
 | `discovered` | + the sentence, for `lingerMs` |
 
 `eyesClosed` is deliberately **not** a state — it is an orthogonal overlay, since
-it can be true in two of the three. The full-bleed reveal image sits above the
-sentence, so a blink hides it: the picture exists only inside the blink.
+it can be true in two of the three.
+
+## The two reveals
+
+Both are single compositor operations declared in `src/styles/reveal.css`. No
+pixels are read back, nothing is redrawn, and the painting loop never learns
+either happened — so they cost the same at 5,000 marks or 50,000.
+
+**The blink inverts the screen.** A white plane in `mix-blend-mode: difference`
+is an exact inversion: `|backdrop − 255|` is `255 − backdrop`, per channel. It is
+preferred over `filter: invert()` on the canvas element, which on some drivers
+pulls a frequently-redrawn canvas out of accelerated compositing. The plane sits
+*above* the sentence, so a blink inverts that too — everything inverts.
+
+**The sentence is dismissed by a blink** — on the eyes *closing*, so it is
+already gone when they can see again. `lingerTimerEnabled` ("Sentence lingers
+timer" in the panel) decides whether `lingerMs` also clears it: on, whichever
+comes first; off, only a blink will.
+
+**The sentence is a negative cut into the painting**, not a panel laid over it:
+`difference` again, so the letters read as `revealTextColor` over the dark ground
+and flip to its complement wherever a pale mark passes underneath, and the
+painting keeps moving through the type. Its size is measured rather than
+guessed — `revealText.js` grows the type until it is about to overflow, once on
+show and on resize, never per frame — so the sentence fills the screen without
+clipping whatever the wording or the display. Every line is flush to both edges
+(`text-align-last: justify` with `text-justify: inter-character`, so a
+single-word last line can stretch on letter gaps and still reach the right
+edge; where that is unsupported the last line falls back to natural width).
 
 **The sentence is a moment, not an ending.** When the determiner is certain it
 shows for `lingerMs` (5s default) and then hands the participant back to being

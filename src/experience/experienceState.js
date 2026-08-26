@@ -18,7 +18,7 @@ export const STATE = {
  * DISCOVERED, so modelling it as a state would give the product of two
  * machines. It is an orthogonal boolean rendered as an overlay.
  */
-export function createExperience({ settings, perception, painting, revealImage, revealText, flags = {} }) {
+export function createExperience({ settings, perception, painting, revealInvert, revealText, flags = {} }) {
   const listeners = [];
   const { discovery, participant } = perception.handles;
 
@@ -83,7 +83,7 @@ export function createExperience({ settings, perception, painting, revealImage, 
     if (allowed === eyesClosed) return;
     eyesClosed = allowed;
     if (eyesClosed) eyesClosedSince = now();
-    revealImage.set(eyesClosed);
+    revealInvert.set(eyesClosed);
   }
 
   // ---- perception -> state -------------------------------------------------
@@ -104,7 +104,14 @@ export function createExperience({ settings, perception, painting, revealImage, 
     go(STATE.IDLE);
   });
 
-  perception.on("blink", ({ closed }) => setEyesClosed(closed));
+  perception.on("blink", ({ closed }) => {
+    setEyesClosed(closed);
+
+    // Blinking dismisses the sentence, and it goes on the eyes CLOSING rather
+    // than opening — so it is already gone when they can see again, and the
+    // question is answered by the way it leaves.
+    if (closed && state === STATE.DISCOVERED) go(STATE.ENGAGED);
+  });
 
   perception.on("discovery", () => {
     // Only somebody actually engaged can spend a determination. Guarded because
@@ -127,7 +134,13 @@ export function createExperience({ settings, perception, painting, revealImage, 
 
   function tick(at = now()) {
     // The sentence is shown for lingerMs and then gives them back the painting.
-    if (state === STATE.DISCOVERED && at - discoveredAt >= settings.lingerMs) {
+    // With the timer off it stays until they blink it away, however long that
+    // takes — blinking is always able to dismiss it either way.
+    if (
+      state === STATE.DISCOVERED &&
+      settings.lingerTimerEnabled &&
+      at - discoveredAt >= settings.lingerMs
+    ) {
       go(STATE.ENGAGED);
     }
 
