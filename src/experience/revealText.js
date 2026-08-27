@@ -1,11 +1,24 @@
 /**
- * The discovery sentence, cut into the painting as a negative.
+ * The discovery sentences, cut into the painting as negatives.
  *
  * Shown when the determiner is certain the participant has worked out that
  * blinking does something. The negative is `mix-blend-mode: difference` in
  * reveal.css; this module owns the body class, the colour the blend is
- * computed from, and the type size.
+ * computed from, the wording, and the type size.
  */
+
+/**
+ * THE PHRASES. Edit, reorder, add or remove freely — one string per screen.
+ * Each showing takes the next one and wraps around at the end, so a
+ * participant who keeps earning the sentence gets a different one each time.
+ * Length is not a constraint: fit() measures the type to the screen.
+ */
+export const PHRASES = [
+  "Can we still be seen when we can't see, ourselves?",
+  "What else are we interacting with, unknowingly?",
+  "Who acts, can't see. Who sees, can't act. The system binds.",
+];
+
 const MAX_WIDTH_FRACTION = 0.155; // of viewport width, as a starting guess
 const MAX_HEIGHT_FRACTION = 0.34; // of viewport height
 const SHRINK = 0.97;
@@ -16,6 +29,7 @@ export function createRevealText({ settings }) {
   const span = element.querySelector("span");
   let shown = false;
   let resizeTimer = 0;
+  let phraseIndex = 0;
 
   const applyColor = () => {
     document.documentElement.style.setProperty("--reveal-text-color", settings.revealTextColor);
@@ -45,8 +59,15 @@ export function createRevealText({ settings }) {
     }
   };
 
+  const setText = (text) => {
+    span.textContent = text;
+    fit();
+  };
+
   applyColor();
-  fit();
+  // The markup carries a phrase so the page is never empty mid-load; the array
+  // is the source of truth from here on.
+  setText(PHRASES[0]);
 
   window.addEventListener("resize", () => {
     window.clearTimeout(resizeTimer);
@@ -58,6 +79,8 @@ export function createRevealText({ settings }) {
       if (shown) return;
       shown = true;
       applyColor();
+      setText(PHRASES[phraseIndex % PHRASES.length]);
+      phraseIndex = (phraseIndex + 1) % PHRASES.length;
       document.body.classList.add("discovered");
     },
     hide() {
@@ -65,10 +88,7 @@ export function createRevealText({ settings }) {
       shown = false;
       document.body.classList.remove("discovered");
     },
-    setText(text) {
-      span.textContent = text;
-      fit();
-    },
+    setText,
     applyColor,
     fit,
     get shown() { return shown; },
