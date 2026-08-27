@@ -1,21 +1,19 @@
 /**
  * Is somebody engaging with the piece, as opposed to merely being in the room?
  *
- * Two signals, both required:
- *   coverage   how much of the frame the person's silhouette fills
- *   faceScale  how large their face is on screen — the actual proximity proxy
+ * One signal: how large their face is on screen. That is a real proximity
+ * proxy — it grows as somebody walks up — and it cannot promise a blink
+ * interaction before there is a face to read blinks from.
  *
- * Coverage alone conflates one person standing close with three standing far
- * away, and it can cross its threshold before there is a trackable face at all
- * — which would promise a blink interaction the piece cannot yet detect.
- * Requiring a face of a given size fixes both.
+ * Mask coverage used to be required alongside it. Segmentation is gone, and it
+ * was the weaker half anyway: coverage conflates one person standing close with
+ * three standing far away.
  *
  * Separate enter/exit thresholds give hysteresis; the dwell timers stop
  * somebody walking past from tripping it.
  */
 export function createEngagement({ settings, onChange = () => {} }) {
   let engaged = false;
-  let coverage = 0;
   let faceScale = 0;
   let hasFace = false;
   let candidateSince = null; // when the gate first disagreed with `engaged`
@@ -25,9 +23,9 @@ export function createEngagement({ settings, onChange = () => {} }) {
     // Entering demands both signals over their ENTER thresholds; staying only
     // demands they remain over the lower EXIT thresholds.
     if (engaged) {
-      return hasFace && coverage >= settings.exitCoverage && faceScale >= settings.exitFaceScale;
+      return hasFace && faceScale >= settings.exitFaceScale;
     }
-    return hasFace && coverage >= settings.enterCoverage && faceScale >= settings.enterFaceScale;
+    return hasFace && faceScale >= settings.enterFaceScale;
   }
 
   function describe(passing) {
@@ -56,14 +54,10 @@ export function createEngagement({ settings, onChange = () => {} }) {
 
     engaged = passing;
     candidateSince = null;
-    onChange({ engaged, reason: lastReason, coverage, faceScale });
+    onChange({ engaged, reason: lastReason, faceScale });
   }
 
   return {
-    updateCoverage(nextCoverage, at) {
-      coverage = nextCoverage;
-      evaluate(at);
-    },
     updateFace({ hasFace: nextHasFace, scale, at }) {
       hasFace = nextHasFace;
       faceScale = nextHasFace ? scale : 0;
@@ -72,7 +66,6 @@ export function createEngagement({ settings, onChange = () => {} }) {
     reset() {
       engaged = false;
       candidateSince = null;
-      coverage = 0;
       faceScale = 0;
       hasFace = false;
     },
@@ -80,7 +73,6 @@ export function createEngagement({ settings, onChange = () => {} }) {
     get snapshot() {
       return {
         engaged,
-        coverage,
         faceScale,
         hasFace,
         reason: lastReason,

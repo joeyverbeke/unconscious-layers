@@ -1,5 +1,5 @@
 import { FaceLandmarker } from "./vision.js";
-import { getCoverCrop } from "./personMask.js";
+
 
 // Eyes and lips only — the features the painting draws.
 export const FACE_FEATURE_CONNECTIONS = Object.freeze([
@@ -23,12 +23,50 @@ export const FACE_FEATURE_INDEX_GROUPS = Object.freeze(
   }),
 );
 
+// A deliberately sparse face: the outline of the head, the ridge and base of
+// the nose, the eyes and the lips. Not all 478 landmarks — the point is a few
+// marks that read as a face, not a mesh.
+const FACE_OVAL_LANDMARKS = Object.freeze([
+  10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365,
+  379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234,
+  127, 162, 21, 54, 103, 67, 109,
+]);
+const NOSE_LANDMARKS = Object.freeze([
+  168, 6, 197, 195, 5, 4, 1, 2, 98, 97, 326, 327,
+]);
+
+export const FACE_LANDMARK_GROUPS = Object.freeze([
+  ...FACE_FEATURE_INDEX_GROUPS,   // left eye, right eye, lips
+  NOSE_LANDMARKS,
+  FACE_OVAL_LANDMARKS,
+]);
+
+// Marks on the eyes and lips read larger than marks tracing the jaw, so the
+// face does not dissolve into an even scatter of identical dots.
+const FACE_GROUP_SCALES = Object.freeze([1.15, 1.15, 1.15, 0.9, 0.75]);
+
 const CULL_MARGIN = 20; // reference px
 
 /**
- * Landmarks -> canvas-space points, mirrored, through the SAME cover-crop the
- * person mask uses. At 16:9 the two crops coincide, so the body outline and
- * the eyes/mouth finally land in one coordinate space.
+ * Mirrored centre-crop from camera space to canvas space. Lived in
+ * personMask.js until segmentation was removed; the face is the only thing
+ * that needs it now.
+ */
+export function getCoverCrop(sourceWidth, sourceHeight, targetWidth, targetHeight) {
+  const sourceAspect = sourceWidth / sourceHeight;
+  const targetAspect = targetWidth / targetHeight;
+
+  if (sourceAspect > targetAspect) {
+    const width = sourceHeight * targetAspect;
+    return { x: (sourceWidth - width) / 2, y: 0, width, height: sourceHeight };
+  }
+  const height = sourceWidth / targetAspect;
+  return { x: 0, y: (sourceHeight - height) / 2, width: sourceWidth, height };
+}
+
+/**
+ * Landmarks -> canvas-space points, mirrored. Each point carries the size
+ * emphasis of the feature it belongs to.
  */
 export function mapFaceFeatures(landmarks, video, canvasWidth, canvasHeight, margin = CULL_MARGIN) {
   if (!landmarks) return [];
@@ -36,8 +74,9 @@ export function mapFaceFeatures(landmarks, video, canvasWidth, canvasHeight, mar
   const crop = getCoverCrop(video.videoWidth, video.videoHeight, canvasWidth, canvasHeight);
   const points = [];
 
-  for (const landmarkIndices of FACE_FEATURE_INDEX_GROUPS) {
-    for (const index of landmarkIndices) {
+  for (let groupIndex = 0; groupIndex < FACE_LANDMARK_GROUPS.length; groupIndex += 1) {
+    const scale = FACE_GROUP_SCALES[groupIndex];
+    for (const index of FACE_LANDMARK_GROUPS[groupIndex]) {
       const landmark = landmarks[index];
       if (!landmark) continue;
       const videoX = landmark.x * video.videoWidth;
@@ -46,7 +85,7 @@ export function mapFaceFeatures(landmarks, video, canvasWidth, canvasHeight, mar
       const y = ((videoY - crop.y) / crop.height) * canvasHeight;
 
       if (x >= -margin && x <= canvasWidth + margin && y >= -margin && y <= canvasHeight + margin) {
-        points.push({ x, y });
+        points.push({ x, y, scale });
       }
     }
   }

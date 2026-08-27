@@ -29,11 +29,36 @@ only — never over the LAN IP.
 | state | what is on screen |
 |---|---|
 | `idle` | the painting, alone |
-| `engaged` | + their outline, eyes and mouth; the blink reveal is armed |
+| `engaged` | + their face, drawn in the painting's own marks; the blink reveal is armed |
 | `discovered` | + the sentence, for `lingerMs` |
 
 `eyesClosed` is deliberately **not** a state — it is an orthogonal overlay, since
 it can be true in two of the three.
+
+## How the person is drawn
+
+There is no segmentation. One FaceLandmarker runs, and the person is built from
+**120 landmarks in five groups** — the oval of the head, the ridge and base of
+the nose, both eyes and the lips. Deliberately sparse: a few marks that read as
+a face, not a mesh of all 478.
+
+Those marks are **borrowed from the painting** rather than created — a capped
+number of existing objects are lifted out of the FIFO, sent to their landmark,
+and flung back when the face goes. Marks on the eyes and lips are drawn larger
+than marks tracing the jaw (`FACE_GROUP_SCALES`), so the face does not dissolve
+into an even scatter of identical dots, and each carries a contrasting edge
+because a hundred small marks among twenty thousand are otherwise invisible.
+
+Following the face needs no kd-tree. A silhouette was an unordered cloud whose
+point count changed every frame; landmark *i* is the same corner of the same eye
+every time, so the same index mapping used when the marks were borrowed keeps
+each mark on its own feature — cheaper, and marks no longer swap places as the
+head moves.
+
+**Engagement is face scale alone.** Mask coverage used to be required alongside
+it and was the weaker half anyway: it conflates one person standing close with
+three standing far away, and it could cross its threshold before there was a
+trackable face at all.
 
 ## The two reveals
 

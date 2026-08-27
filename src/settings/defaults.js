@@ -19,22 +19,19 @@ export const DEFAULT_SETTINGS = Object.freeze({
   highlightOpacityHighPercent: 20,
 
   // ---- tracked forms ------------------------------------------------------
-  maxOutlineObjects: 1400,
   maxFaceObjects: 300,
+  // How fast a borrowed mark travels to the landmark it was assigned.
+  outlineApproachSpeedPixelsPerSecond: 350,
+  // Largest existing mark that may be borrowed to build the face.
   maxOutlineObjectSize: 18,
-  objectsPerOutlinePoint: 2,
   objectsPerFaceLandmark: 2,
   perimeterMinSize: 2,
   perimeterMaxSize: 15,
   perimeterSizeVariability: 1,
-  drawPersonOutline: true,
   drawFaceLandmarks: true,
 
   // ---- motion -------------------------------------------------------------
   positionEasePerFrame: 0.14,
-  outlineApproachSpeedPixelsPerSecond: 350,
-  crawlPerimeter: false,
-  crawlSpeedPixelsPerSecond: 10,
 
   // ---- colour -------------------------------------------------------------
   backgroundColor: "#00070a",
@@ -54,8 +51,6 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // Coverage is a fraction of the 320x180 mask. Face scale is the face
   // bounding-box diagonal over the crop diagonal, and is the real proximity
   // signal — coverage alone cannot tell one person close from several far.
-  enterCoverage: 0.02,
-  exitCoverage: 0.01,
   enterFaceScale: 0.22, // CALIBRATE ON SITE — depends on lens FOV and distance
   exitFaceScale: 0.17,
   engageDwellMs: 600,
@@ -169,7 +164,5 @@ export const DEFAULT_SETTINGS = Object.freeze({
   eyesClosedWatchdogMs: 3000,
 
   // ---- performance --------------------------------------------------------
-  segmentationFps: 15,
-  outlineRetargetHz: 15,
   rotatedSquares: true,
 });

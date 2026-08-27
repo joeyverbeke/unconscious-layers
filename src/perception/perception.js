@@ -1,6 +1,5 @@
 import { openCamera } from "./camera.js";
-import { createFaceLandmarker, createSegmenter, modelCounts } from "./vision.js";
-import { buildPersonMask, MASK_WIDTH, MASK_HEIGHT } from "./personMask.js";
+import { createFaceLandmarker, modelCounts } from "./vision.js";
 import { mapFaceFeatures, faceScaleOf } from "./faceFeatures.js";
 import { createBlinkPipeline } from "./blinkPipeline.js";
 import { createDiscovery } from "./blink/discovery.js";
@@ -9,9 +8,10 @@ import { createEngagement } from "../experience/engagement.js";
 import { mapBlinkSettings, mapDiscoverySettings } from "./tuning.js";
 
 /**
- * One camera, one ImageSegmenter, one FaceLandmarker.
+ * One camera, one FaceLandmarker. The person is drawn from face landmarks
+ * alone — there is no segmentation and no silhouette.
  *
- * Everything downstream — presence, contours, eyes and mouth, blink detection,
+ * Everything downstream — the face marks, blink detection,
  * the discovery determiner and participant identity — is fed from those, so
  * the page never runs a second copy of a model.
  */
@@ -52,14 +52,9 @@ export function createPerception({ settings, flags, canvasSize }) {
 
   discovery.onDiscovered((report) => emit("discovery", { report }));
 
-  // The hub owns this copy. personMask.js hands back module-level shared
-  // buffers that are overwritten on the next frame, so anything emitted to
-  // listeners must be a copy or it silently reads the wrong frame later.
-  const maskCopy = new Uint8Array(MASK_WIDTH * MASK_HEIGHT);
 
   let camera = null;
   let faceLandmarker = null;
-  let segmenter = null;
   let running = false;
 
   // MediaPipe demands strictly increasing timestamps per task instance, and
@@ -74,7 +69,6 @@ export function createPerception({ settings, flags, canvasSize }) {
     hasFace: false,
     faces: 0,
     faceScale: 0,
-    coverage: 0,
     latency: 0,
     cameraFps: 0,
     raw: { left: 0, right: 0 },
@@ -82,7 +76,7 @@ export function createPerception({ settings, flags, canvasSize }) {
     blocked: null,
     reason: null,
     closed: false,
-    delegates: { face: null, segmenter: null },
+    delegates: { face: null },
     cameraSettings: {},
   };
 
@@ -107,9 +101,6 @@ export function createPerception({ settings, flags, canvasSize }) {
       faceLandmarker = face.task;
       latest.delegates.face = face.delegate;
 
-      const seg = await createSegmenter({ delegate });
-      segmenter = seg.task;
-      latest.delegates.segmenter = seg.delegate;
     } catch (error) {
       console.error("Vision models unavailable:", error);
       emit("error", { message: "Vision models unavailable.", fatal: true });
@@ -243,70 +234,11 @@ export function createPerception({ settings, flags, canvasSize }) {
     });
   }
 
-  // ---- Loop B: segmentation, throttled. 15fps is plenty for a silhouette.
-  function startSlowLoop() {
-    const video = camera.video;
-    let lastRunAt = 0;
-    let lastVideoTime = -1;
-
-    const tick = (now) => {
-      if (!running) return;
-      requestAnimationFrame(tick);
-
-      if (
-        now - lastRunAt < 1000 / Math.max(1, settings.segmentationFps) ||
-        video.currentTime === lastVideoTime ||
-        video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
-      ) {
-        return;
-      }
-      lastRunAt = now;
-      lastVideoTime = video.currentTime;
-
-      try {
-        segmenter.segmentForVideo(video, stampSeg(), (result) => {
-          const confidenceMask = result.confidenceMasks?.[0];
-          if (!confidenceMask) return;
-
-          const built = buildPersonMask(
-            confidenceMask.getAsFloat32Array(),
-            confidenceMask.width,
-            confidenceMask.height,
-            video.videoWidth,
-            video.videoHeight,
-          );
-
-          maskCopy.set(built.mask);
-          latest.coverage = built.coverage;
-
-          engagement.updateCoverage(built.coverage, performance.now());
-          emit("mask", {
-            mask: maskCopy,
-            width: built.width,
-            height: built.height,
-            coverage: built.coverage,
-          });
-        });
-      } catch (error) {
-        console.error("Segmentation stopped:", error);
-        running = false;
-        emit("error", { message: "Segmentation stopped.", fatal: false });
-      }
-    };
-
-    requestAnimationFrame(tick);
-  }
-
   // The determiner, with the bar moved according to whether this person has
-  // already shown they know.
-  //
-  // The first finding has to be convincing: nobody has proved anything yet.
-  // The second does not — they demonstrated it a moment ago and are plainly
-  // doing it again on purpose. Holding them to the same standard twice reads,
-  // from where they stand, as the machine having forgotten.
-  //
-  // config is mutable by design (that is how the debug panel tunes it live),
-  // so this needs no further change to discovery.js.
+  // already shown they know. The first finding has to be convincing; the second
+  // does not — they demonstrated it a moment ago and are plainly doing it again
+  // on purpose. config is mutable by design, so this needs no change to
+  // discovery.js.
   let barLowered = false;
 
   const applyBar = () => {
@@ -322,7 +254,7 @@ export function createPerception({ settings, flags, canvasSize }) {
     get config() { return discovery.config; },
     get barLowered() { return barLowered; },
 
-    // Same person, still standing there.
+    // Same person, still standing there: keep their calibration and baseline.
     rearm() {
       discovery.rearm();
       barLowered = true;
@@ -344,9 +276,7 @@ export function createPerception({ settings, flags, canvasSize }) {
     if (key === "all" || key.startsWith("discovery")) {
       Object.assign(discovery.config, mapDiscoverySettings(settings));
       // mapDiscoverySettings always writes the full-strength bar, so put the
-      // lowered one back if this person has already earned it. Without this,
-      // touching any panel control mid-session would quietly raise the bar
-      // again under somebody who had already shown they know.
+      // lowered one back if this person has already earned it.
       applyBar();
     }
     if (key === "blinkNormalize") blinkPipeline.setNormalize(settings.blinkNormalize);
@@ -358,7 +288,6 @@ export function createPerception({ settings, flags, canvasSize }) {
       running = false;
       camera?.stop();
       faceLandmarker?.close();
-      segmenter?.close();
     },
     on(event, handler) {
       const list = listeners.get(event) ?? [];

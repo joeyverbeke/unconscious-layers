@@ -42,11 +42,6 @@ debugPanel = createDebugPanel({
 // ---- perception -> painting ------------------------------------------------
 perception.on("video", (video) => debugPanel.attachCamera(video));
 
-perception.on("mask", ({ mask, width, height, coverage }) => {
-  painting.updateMask({ mask, width, height, coverage });
-  debugPanel.updateMask(mask, width, height);
-});
-
 perception.on("face", ({ featurePoints }) => painting.updateFacePoints(featurePoints));
 
 perception.on("error", ({ message }) => {
@@ -120,7 +115,6 @@ setInterval(() => {
       : "none",
     drift: p.drift === null ? "—" : p.drift.toFixed(3),
     "face scale": `${l.faceScale.toFixed(3)} (${e.reason})`,
-    coverage: l.coverage.toFixed(4),
   });
 
   debugPanel.updateReadout("blink", {

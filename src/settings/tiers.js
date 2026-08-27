@@ -6,16 +6,13 @@ export const TIERS = {
   // ?tier=high is a no-op rather than something richer than the piece is meant
   // to be. The ladder only ever steps DOWN from what the work actually is.
   high: {
-    objectCount: 22000, primitivesPerSecond: 45, segmentationFps: 15, outlineRetargetHz: 15,
-    maxOutlineObjects: 1400, maxFaceObjects: 300, rotatedSquares: true,
+    objectCount: 22000, primitivesPerSecond: 45, maxFaceObjects: 300, rotatedSquares: true,
   },
   medium: {
-    objectCount: 10000, primitivesPerSecond: 22, segmentationFps: 12, outlineRetargetHz: 10,
-    maxOutlineObjects: 900, maxFaceObjects: 240, rotatedSquares: true,
+    objectCount: 10000, primitivesPerSecond: 22, maxFaceObjects: 240, rotatedSquares: true,
   },
   low: {
-    objectCount: 5000, primitivesPerSecond: 12, segmentationFps: 8, outlineRetargetHz: 6,
-    maxOutlineObjects: 500, maxFaceObjects: 180, rotatedSquares: false,
+    objectCount: 5000, primitivesPerSecond: 12, maxFaceObjects: 180, rotatedSquares: false,
   },
 };
 

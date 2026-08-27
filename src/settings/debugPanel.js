@@ -39,7 +39,7 @@ const CONTROL_SECTIONS = [
 ];
 
 // Readout groups are output-only: rows are rendered once and updated by
-// updateReadout(). The panel previously had only updateStats and updateMask.
+// updateReadout(). The panel previously had only updateStats.
 const READOUT_GROUPS = [
   { key: "session", section: "session",
     rows: ["state", "for", "session", "linger", "drift", "face scale", "coverage"] },
@@ -60,19 +60,9 @@ const CHANNELS = [
 
 const BOOLEAN_CONTROLS = [
   {
-    key: "drawPersonOutline",
-    label: "Person outline",
-    section: "visibility",
-  },
-  {
     key: "drawFaceLandmarks",
     label: "Face landmarks",
     section: "visibility",
-  },
-  {
-    key: "crawlPerimeter",
-    label: "Perimeter crawl",
-    section: "motion",
   },
   { key: "blinkGates", label: "Gates (reject squints/turns)", section: "blink" },
   { key: "blinkBothEyes", label: "Require both eyes", section: "blink" },
@@ -172,12 +162,12 @@ const NUMBER_CONTROLS = [
     section: "blend",
   },
   {
-    key: "maxOutlineObjects",
-    label: "Person outline mark limit",
-    min: 50,
-    max: 12000,
-    step: 50,
-    section: "tracking",
+    key: "outlineApproachSpeedPixelsPerSecond",
+    label: "Mark approach speed (px/s)",
+    min: 10,
+    max: 2000,
+    step: 10,
+    section: "motion",
   },
   {
     key: "maxFaceObjects",
@@ -189,17 +179,9 @@ const NUMBER_CONTROLS = [
   },
   {
     key: "maxOutlineObjectSize",
-    label: "Largest mark used for tracking",
+    label: "Largest mark borrowed for the face",
     min: 1,
     max: 100,
-    step: 1,
-    section: "tracking",
-  },
-  {
-    key: "objectsPerOutlinePoint",
-    label: "Marks per body point",
-    min: 1,
-    max: 10,
     step: 1,
     section: "tracking",
   },
@@ -217,22 +199,6 @@ const NUMBER_CONTROLS = [
     min: 0.01,
     max: 0.5,
     step: 0.01,
-    section: "motion",
-  },
-  {
-    key: "outlineApproachSpeedPixelsPerSecond",
-    label: "Move-to-person speed (px/sec)",
-    min: 5,
-    max: 1000,
-    step: 5,
-    section: "motion",
-  },
-  {
-    key: "crawlSpeedPixelsPerSecond",
-    label: "Outline crawl speed (px/sec)",
-    min: 0,
-    max: 500,
-    step: 1,
     section: "motion",
   },
   {
@@ -261,8 +227,6 @@ const NUMBER_CONTROLS = [
   },
 
   // engagement
-  { key: "enterCoverage", label: "Engage: body coverage", min: 0, max: 0.2, step: 0.001, section: "engagement" },
-  { key: "exitCoverage", label: "Disengage: body coverage", min: 0, max: 0.2, step: 0.001, section: "engagement" },
   { key: "enterFaceScale", label: "Engage: face scale", min: 0, max: 0.6, step: 0.005, section: "engagement" },
   { key: "exitFaceScale", label: "Disengage: face scale", min: 0, max: 0.6, step: 0.005, section: "engagement" },
   { key: "engageDwellMs", label: "Engage hold (ms)", min: 0, max: 3000, step: 50, section: "engagement" },
@@ -311,8 +275,6 @@ const NUMBER_CONTROLS = [
   { key: "identitySwapConfirmMs", label: "Confirm a new person (ms)", min: 0, max: 8000, step: 100, section: "session" },
 
   // performance
-  { key: "segmentationFps", label: "Segmentation rate (fps)", min: 2, max: 30, step: 1, section: "performance" },
-  { key: "outlineRetargetHz", label: "Outline retarget rate (Hz)", min: 1, max: 30, step: 1, section: "performance" },
 ];
 
 export function loadSettings(defaults) {
@@ -362,9 +324,6 @@ export function createDebugPanel({ settings, defaults, onChange }) {
   const objectCountOutput = document.querySelector("#debug-object-count");
   const fpsOutput = document.querySelector("#debug-fps");
   const cameraMount = document.querySelector("#debug-camera-mount");
-  const maskCanvas = document.querySelector("#debug-mask");
-  const maskContext = maskCanvas.getContext("2d");
-  let maskImageData;
   const diagnostics = document.querySelector(".debug-diagnostics");
   const inputByKey = new Map();
   const rangeByKey = new Map();
@@ -919,48 +878,6 @@ export function createDebugPanel({ settings, defaults, onChange }) {
       video.style.display = "block";
       video.className = "debug-camera";
       cameraMount.replaceChildren(video);
-    },
-    updateMask(mask, width, height) {
-      if (panel.hidden || !diagnostics.open) return;
-
-      if (maskCanvas.width !== width || maskCanvas.height !== height) {
-        maskCanvas.width = width;
-        maskCanvas.height = height;
-        maskImageData = undefined;
-      }
-
-      maskImageData ??= maskContext.createImageData(width, height);
-      const image = maskImageData;
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          const index = y * width + x;
-          const inside = mask[index] === 1;
-          const boundary =
-            inside &&
-            (x === 0 ||
-              x === width - 1 ||
-              y === 0 ||
-              y === height - 1 ||
-              !mask[index - 1] ||
-              !mask[index + 1] ||
-              !mask[index - width] ||
-              !mask[index + width]);
-          const offset = index * 4;
-
-          if (boundary) {
-            image.data[offset] = 252;
-            image.data[offset + 1] = 191;
-            image.data[offset + 2] = 73;
-          } else {
-            const value = inside ? 72 : 8;
-            image.data[offset] = value;
-            image.data[offset + 1] = value;
-            image.data[offset + 2] = value;
-          }
-          image.data[offset + 3] = 255;
-        }
-      }
-      maskContext.putImageData(image, 0, 0);
     },
     updateStats(objectCount, framesPerSecond) {
       objectCountOutput.textContent = objectCount.toLocaleString();

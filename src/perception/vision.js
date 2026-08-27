@@ -1,11 +1,10 @@
-import { FaceLandmarker, FilesetResolver, ImageSegmenter } from "@mediapipe/tasks-vision";
+import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 
 // One place for every MediaPipe path. /mediapipe/wasm resolves identically in
 // dev and in a build (see vite.config.js) — there is deliberately no
 // import.meta.env.DEV branch, because that is what shipped a dead build before.
 const WASM_BASE = "/mediapipe/wasm";
 const FACE_MODEL = "/models/face_landmarker.task";
-const SEGMENTER_MODEL = "/models/selfie_segmenter_landscape.tflite";
 
 let filesetPromise = null;
 
@@ -15,9 +14,10 @@ export function loadVision() {
   return filesetPromise;
 }
 
-// Instantiation counters. There must be exactly ONE of each for the whole
-// page: the model is the expensive thing, not the camera stream.
-export const modelCounts = { faceLandmarker: 0, segmenter: 0 };
+// Instantiation counter. There must be exactly ONE FaceLandmarker for the
+// whole page: the model is the expensive thing, not the camera stream.
+// pipeline-check asserts this.
+export const modelCounts = { faceLandmarker: 0 };
 
 async function withDelegateFallback(create, preferred, label) {
   try {
@@ -55,21 +55,5 @@ export async function createFaceLandmarker({ delegate = "GPU" } = {}) {
   return result;
 }
 
-export async function createSegmenter({ delegate = "GPU" } = {}) {
-  const vision = await loadVision();
-  const result = await withDelegateFallback(
-    (d) =>
-      ImageSegmenter.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: SEGMENTER_MODEL, delegate: d },
-        runningMode: "VIDEO",
-        outputCategoryMask: false,
-        outputConfidenceMasks: true,
-      }),
-    delegate,
-    "ImageSegmenter",
-  );
-  modelCounts.segmenter += 1;
-  return result;
-}
 
 export { FaceLandmarker };

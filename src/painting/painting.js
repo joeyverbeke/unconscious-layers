@@ -1,13 +1,6 @@
 import p5 from "p5";
 import { PaintingQueue } from "./PaintingQueue.js";
-import { NearestPointIndex } from "./NearestPointIndex.js";
 import { createScale } from "./scale.js";
-import {
-  extractContours,
-  createContourMetric,
-  pointAlongContour,
-  findNearestContourLocation,
-} from "./contours.js";
 
 const BLEND_LAYER_MULTIPLY = "multiply";
 const BLEND_LAYER_NORMAL = "normal";
@@ -28,7 +21,6 @@ const REF_TYPHOON_MIN_WIDTH = 5;
 const REF_TYPHOON_STEP_MIN = 1;
 const REF_TYPHOON_STEP_MAX = 20;
 const REF_JITTER_AMPLITUDE = 4;
-const REF_CONTOUR_MIN_PERIMETER = 60;
 const REF_ARRIVAL_EPSILON = 4;
 const REF_GRAVITY = 0.38;
 const REF_FALL_CULL_MARGIN = 120;
@@ -58,18 +50,12 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
   let lastStatsAt = 0;
 
   let engaged = false;
-  let latestContours = [];
-  let latestContourMetrics = [];
-  let latestOutline = [];
   let pendingTyphoonPieces = [];
   let pendingTyphoonIndex = 0;
-  let activeOutlineObjects = [];
   let activeFaceObjects = [];
   let fallingOutlineObjects = [];
   let latestFacePoints = [];
   let lastFaceSeenAt = -Infinity;
-  let crawlDistance = 0;
-  let lastOutlineRetargetAt = 0;
   let resizeTimer = 0;
 
   const drawState = { mode: null, r: -1, g: -1, b: -1, alpha: -1 };
@@ -110,21 +96,6 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
 
       const frameScale = Math.min(p.deltaTime / (1000 / 60), 6);
       const easing = 1 - Math.pow(1 - settings.positionEasePerFrame, frameScale);
-
-      const outlineHasArrived =
-        activeOutlineObjects.length > 0 &&
-        activeOutlineObjects.every((object) => object.arrivedOnPerimeter);
-      if (settings.crawlPerimeter && outlineHasArrived && latestContourMetrics.length > 0) {
-        advanceCrawlingOutline(
-          activeOutlineObjects,
-          latestContourMetrics,
-          scale.px(settings.crawlSpeedPixelsPerSecond) * (elapsedMs / 1000),
-        );
-      }
-
-      for (const object of activeOutlineObjects) {
-        updateActiveOutlineObject(object, easing, elapsedMs / 1000);
-      }
       for (const object of activeFaceObjects) {
         updateActiveOutlineObject(object, easing, elapsedMs / 1000);
       }
@@ -144,9 +115,6 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
 
       // Tracked forms are independent layers: FIFO turnover in the painting
       // cannot recycle them, and they are always drawn normally blended on top.
-      if (settings.drawPersonOutline) {
-        for (const object of activeOutlineObjects) drawObject(p, object);
-      }
       if (settings.drawFaceLandmarks) {
         for (const object of activeFaceObjects) drawObject(p, object);
       }
@@ -207,22 +175,17 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
     // be walked or half the marks resize and half do not.
     restyleBlendObjects(objects);
     restyleBlendObjects(pendingTyphoonPieces);
-    resizePerimeterObjects(activeOutlineObjects);
     resizePerimeterObjects(activeFaceObjects);
 
     resizeObjectPool(p, objects, settings.objectCount, () => nextObjectId++);
     rebuildPaintingLayers(objects);
 
     // The next mask frame refills these in the new coordinate space.
-    latestContours = [];
-    latestContourMetrics = [];
-    latestOutline = [];
   }
 
   function* everyObject() {
     yield* objects;
     yield* pendingTyphoonPieces;
-    yield* activeOutlineObjects;
     yield* activeFaceObjects;
     yield* fallingOutlineObjects;
   }
@@ -235,60 +198,12 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
     if (!sketch) return;
 
     if (engaged) {
-      if (latestOutline.length > 0 && activeOutlineObjects.length === 0) {
-        activeOutlineObjects = createStaticOutlineObjects(
-          objects,
-          latestOutline,
-          latestContourMetrics,
-        );
-      }
       if (latestFacePoints.length > 0 && activeFaceObjects.length === 0) {
         activeFaceObjects = createFaceFeatureObjects(objects, latestFacePoints);
       }
     } else {
-      dropActiveOutlineObjects(sketch);
       dropActiveFaceObjects(sketch);
     }
-  }
-
-  function updateMask({ mask, width, height }) {
-    if (!sketch) return;
-
-    latestContours = extractContours(
-      mask,
-      width,
-      height,
-      sketch.width,
-      sketch.height,
-      scale.px(REF_CONTOUR_MIN_PERIMETER),
-    );
-    latestContourMetrics = latestContours.map(createContourMetric);
-    latestOutline = latestContours.flat();
-
-    if (!engaged || latestOutline.length === 0) return;
-
-    if (activeOutlineObjects.length === 0) {
-      activeOutlineObjects = createStaticOutlineObjects(
-        objects,
-        latestOutline,
-        latestContourMetrics,
-      );
-      return;
-    }
-
-    if (settings.crawlPerimeter) {
-      updateCrawlTargets(activeOutlineObjects, latestContourMetrics);
-      return;
-    }
-
-    // Retargeting rebuilds a kd-tree over the whole silhouette, which is the
-    // second-largest CPU cost after the draw loop. Decouple its rate from the
-    // segmentation rate so it can be turned down independently.
-    const now = performance.now();
-    const interval = 1000 / Math.max(1, settings.outlineRetargetHz);
-    if (now - lastOutlineRetargetAt < interval) return;
-    lastOutlineRetargetAt = now;
-    updateStaticOutlineTargets(activeOutlineObjects, latestOutline);
   }
 
   function updateFacePoints(points) {
@@ -301,7 +216,7 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
     if (activeFaceObjects.length === 0) {
       activeFaceObjects = createFaceFeatureObjects(objects, latestFacePoints);
     } else {
-      updateStaticOutlineTargets(activeFaceObjects, latestFacePoints);
+      updateFaceTargets(activeFaceObjects, latestFacePoints);
     }
   }
 
@@ -317,7 +232,6 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
     if (key === "colors" || key === "all") {
       recolorObjects(objects);
       recolorObjects(pendingTyphoonPieces);
-      recolorObjects(activeOutlineObjects);
       recolorObjects(activeFaceObjects);
       recolorObjects(fallingOutlineObjects);
     }
@@ -333,17 +247,12 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
       rebuildPaintingLayers(objects);
     }
 
-    if (engaged && (key === "crawlPerimeter" || key === "all") && settings.crawlPerimeter) {
-      initializeCrawlFromCurrent(activeOutlineObjects, latestContourMetrics);
-    }
-
     if (
       key === "perimeterMinSize" ||
       key === "perimeterMaxSize" ||
       key === "perimeterSizeVariability" ||
       key === "all"
     ) {
-      resizePerimeterObjects(activeOutlineObjects);
       resizePerimeterObjects(activeFaceObjects);
     }
 
@@ -459,27 +368,6 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
 
   // ------------------------------------------------------- the tracked forms
 
-  function createStaticOutlineObjects(painting, outline, contourMetrics) {
-    const desiredCount = Math.min(
-      settings.maxOutlineObjects,
-      outline.length * settings.objectsPerOutlinePoint,
-    );
-    const dedicatedObjects = takeObjectsFromPainting(painting, desiredCount);
-    resizePerimeterObjects(dedicatedObjects);
-
-    if (settings.crawlPerimeter && contourMetrics.length > 0) {
-      crawlDistance = 0;
-      distributeObjectsAcrossContours(dedicatedObjects, contourMetrics);
-      return dedicatedObjects;
-    }
-
-    for (let i = 0; i < dedicatedObjects.length; i += 1) {
-      const outlineIndex = Math.floor((i / dedicatedObjects.length) * outline.length);
-      attachObjectToPoint(dedicatedObjects[i], outline[outlineIndex]);
-    }
-
-    return dedicatedObjects;
-  }
 
   function createFaceFeatureObjects(painting, featurePoints) {
     const desiredCount = Math.min(
@@ -487,13 +375,18 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
       featurePoints.length * settings.objectsPerFaceLandmark,
     );
     const dedicatedObjects = takeObjectsFromPainting(painting, desiredCount);
-    resizePerimeterObjects(dedicatedObjects);
 
     for (let i = 0; i < dedicatedObjects.length; i += 1) {
       const pointIndex = Math.floor((i / dedicatedObjects.length) * featurePoints.length);
-      attachObjectToPoint(dedicatedObjects[i], featurePoints[pointIndex]);
+      const point = featurePoints[pointIndex];
+      // Marks on the eyes and lips read larger than marks tracing the jaw, so
+      // the face does not dissolve into an even scatter of identical dots.
+      dedicatedObjects[i].faceEmphasis = point.scale ?? 1;
+      attachObjectToPoint(dedicatedObjects[i], point);
     }
 
+    // After the emphasis is set, so it is folded into the size.
+    resizePerimeterObjects(dedicatedObjects);
     return dedicatedObjects;
   }
 
@@ -514,84 +407,25 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
     return dedicatedObjects;
   }
 
-  function distributeObjectsAcrossContours(outlineObjects, contourMetrics) {
-    const totalLength = contourMetrics.reduce((sum, metric) => sum + metric.length, 0);
-    if (totalLength <= 0) return;
 
-    for (let i = 0; i < outlineObjects.length; i += 1) {
-      let globalDistance = (i / outlineObjects.length) * totalLength;
-      let contourIndex = 0;
-      while (
-        contourIndex < contourMetrics.length - 1 &&
-        globalDistance > contourMetrics[contourIndex].length
-      ) {
-        globalDistance -= contourMetrics[contourIndex].length;
-        contourIndex += 1;
-      }
 
-      const object = outlineObjects[i];
-      object.crawlContourIndex = contourIndex;
-      object.crawlBaseDistance = globalDistance;
-      attachObjectToPoint(object, pointAlongContour(contourMetrics[contourIndex], globalDistance));
-    }
-  }
 
-  function initializeCrawlFromCurrent(outlineObjects, contourMetrics) {
-    if (contourMetrics.length === 0) return;
-    crawlDistance = 0;
-    for (const object of outlineObjects) {
-      const location = findNearestContourLocation(contourMetrics, object.x, object.y);
-      object.crawlContourIndex = location.contourIndex;
-      object.crawlBaseDistance = location.t * contourMetrics[location.contourIndex].length;
-      attachObjectToPoint(
-        object,
-        pointAlongContour(contourMetrics[location.contourIndex], object.crawlBaseDistance),
-      );
-    }
-  }
 
-  function updateCrawlTargets(outlineObjects, contourMetrics) {
-    if (contourMetrics.length === 0) return;
-    for (const object of outlineObjects) {
-      const contourIndex = Math.min(object.crawlContourIndex ?? 0, contourMetrics.length - 1);
-      object.crawlContourIndex = contourIndex;
-      attachObjectToPoint(
-        object,
-        pointAlongContour(contourMetrics[contourIndex], (object.crawlBaseDistance ?? 0) + crawlDistance),
-      );
-    }
-  }
 
-  function advanceCrawlingOutline(outlineObjects, contourMetrics, distance) {
-    crawlDistance += distance;
-    for (const object of outlineObjects) {
-      const contourIndex = Math.min(object.crawlContourIndex ?? 0, contourMetrics.length - 1);
-      const metric = contourMetrics[contourIndex];
-      if (!metric || metric.length <= 0) continue;
-      object.crawlContourIndex = contourIndex;
-      attachObjectToPoint(
-        object,
-        pointAlongContour(metric, (object.crawlBaseDistance ?? 0) + crawlDistance),
-      );
-    }
-  }
-
-  function updateStaticOutlineTargets(outlineObjects, outline) {
-    if (outlineObjects.length === 0 || outline.length === 0) return;
-
-    const pointCapacity = Math.max(1, Math.ceil(outlineObjects.length / outline.length));
-    const pointUsage = new Uint16Array(outline.length);
-    const nearestPointIndex = new NearestPointIndex(outline);
-
-    for (const object of outlineObjects) {
-      const outlineIndex = nearestPointIndex.findAvailable(
-        pointUsage,
-        pointCapacity,
-        object.outlineTargetX,
-        object.outlineTargetY,
-      );
-      attachObjectToPoint(object, outline[outlineIndex]);
-      pointUsage[outlineIndex] += 1;
+  /**
+   * Follow the face from frame to frame.
+   *
+   * The silhouette needed a kd-tree here, because a contour is an unordered
+   * cloud whose point count changes every frame. Landmarks are neither: index i
+   * is the same corner of the same eye every time, so the same index mapping
+   * used when the marks were borrowed keeps each mark on its own feature —
+   * cheaper, and it stops marks swapping places as the head moves.
+   */
+  function updateFaceTargets(faceObjects, featurePoints) {
+    if (faceObjects.length === 0 || featurePoints.length === 0) return;
+    for (let i = 0; i < faceObjects.length; i += 1) {
+      const pointIndex = Math.floor((i / faceObjects.length) * featurePoints.length);
+      attachObjectToPoint(faceObjects[i], featurePoints[pointIndex]);
     }
   }
 
@@ -602,12 +436,11 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
     object.targetY = point.y + object.jitterY;
   }
 
-  function dropActiveOutlineObjects(p) {
-    moveObjectsToFallingLayer(p, activeOutlineObjects);
-    activeOutlineObjects = [];
-  }
 
   function dropActiveFaceObjects(p) {
+    for (const object of activeFaceObjects) {
+      object.faceEmphasis = 1;
+    }
     moveObjectsToFallingLayer(p, activeFaceObjects);
     activeFaceObjects = [];
   }
@@ -668,7 +501,7 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
       return;
     }
 
-    const followEase = settings.crawlPerimeter ? Math.max(easing, 0.62) : easing;
+    const followEase = easing;
     object.x += dx * followEase;
     object.y += dy * followEase;
   }
@@ -682,7 +515,8 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
     for (const object of outlineObjects) {
       const randomUnit = fractional(Math.sin((object.id + 1) * 41.733) * 9182.173);
       const randomizedSize = minimum + (maximum - minimum) * randomUnit;
-      object.size = midpoint + (randomizedSize - midpoint) * variability;
+      object.size =
+        (midpoint + (randomizedSize - midpoint) * variability) * (object.faceEmphasis ?? 1);
     }
   }
 
@@ -844,7 +678,6 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
 
   return {
     setEngaged,
-    updateMask,
     updateFacePoints,
     handleSettingsChange,
     get engaged() { return engaged; },
@@ -860,6 +693,12 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
           Object.entries(paintingLayers).map(([k, q]) => [k, q.length]),
         ),
         sample: objects.items?.[objects.head],
+        faceObjects: activeFaceObjects.length,
+        faceSample: activeFaceObjects.slice(0, 3).map((o) => ({
+          x: Math.round(o.x), y: Math.round(o.y),
+          tx: Math.round(o.targetX), ty: Math.round(o.targetY),
+          arrived: o.arrivedOnPerimeter, size: +o.size?.toFixed(1),
+        })),
       };
     },
   };

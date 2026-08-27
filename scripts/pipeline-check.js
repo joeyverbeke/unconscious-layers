@@ -93,40 +93,38 @@ console.log('\nBlink pipeline — a blink is seen, a slow squint is not\n');
   ok('the reveal releases on its own when the face disappears', closed === false);
 }
 
-console.log('\nEngagement — both signals, with hysteresis and dwell\n');
+console.log('\nEngagement — face scale, with hysteresis and dwell\n');
 {
   const settings = {
-    enterCoverage: 0.02, exitCoverage: 0.01,
     enterFaceScale: 0.22, exitFaceScale: 0.17,
     engageDwellMs: 600, disengageDwellMs: 900,
   };
   const events = [];
   const gate = createEngagement({ settings, onChange: (s) => events.push(s.engaged) });
   let at = 0;
-  const step = (coverage, scale, hasFace, ms = 100) => {
+  const step = (scale, hasFace, ms = 100) => {
     at += ms;
-    gate.updateCoverage(coverage, at);
     gate.updateFace({ hasFace, scale, at });
   };
 
-  // Far away: plenty of body in frame, but the face is small.
-  for (let i = 0; i < 12; i++) step(0.05, 0.10, true);
-  ok('a big silhouette with a small face does not engage', gate.engaged === false, gate.snapshot.reason);
+  // In the room, but across it — their face is small.
+  for (let i = 0; i < 12; i++) step(0.10, true);
+  ok('somebody across the room does not engage', gate.engaged === false, gate.snapshot.reason);
 
-  // A face close enough, but only just arrived — the dwell should hold it off.
-  step(0.05, 0.30, true, 100);
-  step(0.05, 0.30, true, 100);
+  // Close enough, but only just arrived — the dwell should hold it off.
+  step(0.30, true, 100);
+  step(0.30, true, 100);
   ok('engagement waits out the dwell', gate.engaged === false);
 
-  for (let i = 0; i < 8; i++) step(0.05, 0.30, true);
-  ok('engaged once both signals hold past the dwell', gate.engaged === true);
+  for (let i = 0; i < 8; i++) step(0.30, true);
+  ok('engaged once the face is close enough, past the dwell', gate.engaged === true);
 
   // Between the exit and enter thresholds: hysteresis should keep them engaged.
-  for (let i = 0; i < 15; i++) step(0.015, 0.19, true);
+  for (let i = 0; i < 15; i++) step(0.19, true);
   ok('hysteresis keeps a wavering signal engaged', gate.engaged === true);
 
-  // Actually leaving.
-  for (let i = 0; i < 15; i++) step(0.001, 0, false);
+  // A face lost entirely.
+  for (let i = 0; i < 15; i++) step(0, false);
   ok('disengaged after they leave', gate.engaged === false);
   ok('exactly one engage and one disengage were emitted',
      events.length === 2 && events[0] === true && events[1] === false,
