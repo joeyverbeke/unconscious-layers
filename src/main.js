@@ -32,8 +32,8 @@ const perception = createPerception({
 debugPanel = createDebugPanel({
   settings,
   defaults: DEFAULT_SETTINGS,
-  onChange: (key) => {
-    painting.handleSettingsChange(key);
+  onChange: (key, committed = true) => {
+    painting.handleSettingsChange(key, committed);
     perception.reconfigure(key);
     if (key === "revealTextColor" || key === "all") revealText.applyColor();
   },

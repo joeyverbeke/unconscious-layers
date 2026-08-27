@@ -9,6 +9,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
   objectCount: 22000,
   primitivesPerSecond: 45,
   maxTyphoonSize: 250,
+
+  // Directional families: bias most gestures onto one of two opposing
+  // diagonals, leaving the rest to wander as before. Per GESTURE, not per mark.
+  directionalFamilyPercent: 80,
+  directionAngleVariationDegrees: 5,
+  // Authored at the 1280x720 reference, like every other pixel value.
+  directionObjectVariation: 2,
   stainBlendWeight: 10,
   normalBlendWeight: 60,
   highlightBlendWeight: 30,

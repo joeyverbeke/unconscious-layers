@@ -29,6 +29,14 @@ const REF_FALL_VELOCITY_Y_MIN = -1.5;
 const REF_FALL_VELOCITY_Y_MAX = 0.5;
 // A per-pixel noise frequency: it scales INVERSELY, otherwise gestures curl
 // more tightly on a larger canvas.
+// Two opposing diagonals. A gesture picks one, wanders slightly around it, and
+// keeps it for its whole length — the decision is per GESTURE, not per mark, so
+// the family stays legible as a direction rather than a texture.
+const DIRECTIONAL_FAMILY_ANGLES = Object.freeze([Math.PI / 4, -Math.PI / 4]);
+// How far the per-mark noise is allowed to pull a directional gesture off its
+// heading. Small: the curvature should read as drift, not as a new direction.
+const DIRECTIONAL_DRIFT = 0.5;
+
 const REF_NOISE_SCALE = 0.001;
 
 /**
@@ -220,9 +228,34 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
     }
   }
 
-  function handleSettingsChange(key) {
+  const DIRECTION_KEYS = new Set([
+    "directionalFamilyPercent",
+    "directionAngleVariationDegrees",
+    "directionObjectVariation",
+  ]);
+
+  function handleSettingsChange(key, committed = true) {
     const p = sketch;
     if (!p) return;
+
+    // Generation-time settings: they shape a gesture as it is made, so existing
+    // marks cannot be restyled into them — the painting has to be made again.
+    //
+    // Only on commit (slider released, number typed): rebuilding twenty
+    // thousand marks on every frame of a drag would lock the page up.
+    //
+    // Deliberately NOT on "all". The only thing that fires "all" at runtime is
+    // the quality governor stepping down, and repainting from scratch would be
+    // a visible jolt at exactly the moment the machine is already struggling.
+    if (DIRECTION_KEYS.has(key)) {
+      if (!committed) return;
+      objects = buildInitialPainting(p, () => nextObjectId++);
+      rebuildPaintingLayers(objects);
+      pendingTyphoonPieces = [];
+      pendingTyphoonIndex = 0;
+      activeFaceObjects = [];
+      return;
+    }
 
     if (key === "objectCount" || key === "all") {
       resizeObjectPool(p, objects, settings.objectCount, () => nextObjectId++);
@@ -299,14 +332,25 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
   function createRandomTyphoon(p, getNextId) {
     const maxSize = scale.px(settings.maxTyphoonSize);
     const width = p.random(p.random(p.random(maxSize))) + scale.px(REF_TYPHOON_MIN_WIDTH);
-    return typhoon(p, p.random(p.width), p.random(p.height), width, getNextId);
+
+    // Once per gesture. Everything downstream inherits this one roll.
+    const usesFamily = p.random() < settings.directionalFamilyPercent / 100;
+    const variation = p.radians(settings.directionAngleVariationDegrees);
+    const directionAngle = usesFamily
+      ? DIRECTIONAL_FAMILY_ANGLES[p.int(p.random(2))] + p.random(-variation, variation)
+      : null;
+
+    return typhoon(p, p.random(p.width), p.random(p.height), width, getNextId, directionAngle);
   }
 
-  function typhoon(p, startX, startY, width, getNextId) {
+  function typhoon(p, startX, startY, width, getNextId, directionAngle = null) {
     const generated = [];
     const numberOfMarks = p.int(p.random(5, 50));
-    let angle = p.random(10);
-    const angleStep = p.random(-1, 1) * 0.05;
+    const isDirectional = Number.isFinite(directionAngle);
+    // A directional gesture starts near its heading and barely turns; a free
+    // one keeps the original behaviour untouched.
+    let angle = isDirectional ? directionAngle + p.random(-0.18, 0.18) : p.random(10);
+    const angleStep = isDirectional ? p.random(-0.012, 0.012) : p.random(-1, 1) * 0.05;
     const colorIndex = p.int(p.random(settings.colors.length));
     const color = hexToRgb(settings.colors[colorIndex]);
     const noiseScale = REF_NOISE_SCALE / scale.length;
@@ -325,8 +369,23 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
       const size = reverseSize
         ? p.map(i, 0, numberOfMarks, 0, width)
         : p.map(i, 0, numberOfMarks, width, 0);
-      const noiseAngle = p.noise(x * noiseScale, y * noiseScale, i * noiseScale * 5) * 100;
+      const noiseValue = p.noise(x * noiseScale, y * noiseScale, i * noiseScale * 5);
+      // The noise still drives the walk; for a directional gesture it drifts
+      // around the heading instead of replacing it.
+      const noiseAngle = isDirectional
+        ? directionAngle + (noiseValue - 0.5) * DIRECTIONAL_DRIFT
+        : noiseValue * 100;
       const center = rotateOffset(x - offset, y - offset, offset, angle);
+
+      // A little scatter along and across the heading. Both axes, or the marks
+      // line up into mechanically straight rows.
+      const placement = scale.px(settings.directionObjectVariation);
+      if (isDirectional && placement > 0) {
+        const along = p.random(-placement, placement);
+        const across = p.random(-placement, placement);
+        center.x += Math.cos(directionAngle) * along + Math.cos(directionAngle + Math.PI / 2) * across;
+        center.y += Math.sin(directionAngle) * along + Math.sin(directionAngle + Math.PI / 2) * across;
+      }
 
       const id = getNextId();
       const jitter = deterministicJitter(id, scale);

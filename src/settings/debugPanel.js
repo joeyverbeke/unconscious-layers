@@ -90,6 +90,30 @@ const NUMBER_CONTROLS = [
     section: "painting",
   },
   {
+    key: "directionalFamilyPercent",
+    label: "Typhoons following diagonals (%)",
+    min: 0,
+    max: 100,
+    step: 1,
+    section: "painting",
+  },
+  {
+    key: "directionAngleVariationDegrees",
+    label: "Typhoon angle variation (\u00b0)",
+    min: 0,
+    max: 45,
+    step: 1,
+    section: "painting",
+  },
+  {
+    key: "directionObjectVariation",
+    label: "Object placement variation (px)",
+    min: 0,
+    max: 80,
+    step: 1,
+    section: "painting",
+  },
+  {
     key: "maxTyphoonSize",
     label: "Largest gesture size",
     min: 10,
@@ -415,7 +439,11 @@ export function createDebugPanel({ settings, defaults, onChange }) {
 
       if (settings[control.key] !== normalized) {
         settings[control.key] = normalized;
-        onChange(control.key);
+        // `save` is true only when the value is committed — the slider let go,
+        // or the number typed. Listeners that need to do something expensive
+        // (rebuilding the whole painting) can wait for that instead of firing
+        // on every frame of a drag.
+        onChange(control.key, save);
       }
       if (save) persistSettings(settings);
     };
