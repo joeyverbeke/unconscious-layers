@@ -342,12 +342,15 @@ export function loadSettings(defaults) {
   return settings;
 }
 
-export function createDebugPanel({ settings, defaults, onChange }) {
+export function createDebugPanel({ settings, defaults, onChange, recorder = null }) {
   const panel = document.querySelector("#debug-panel");
   const form = document.querySelector("#debug-form");
   const objectCountOutput = document.querySelector("#debug-object-count");
   const fpsOutput = document.querySelector("#debug-fps");
   const cameraMount = document.querySelector("#debug-camera-mount");
+  const recordingRow = document.querySelector(".debug-recording");
+  const recordingStatus = document.querySelector("#debug-recording-status");
+  const recordingToggle = document.querySelector("#debug-recording-toggle");
   const diagnostics = document.querySelector(".debug-diagnostics");
   const inputByKey = new Map();
   const rangeByKey = new Map();
@@ -840,9 +843,31 @@ export function createDebugPanel({ settings, defaults, onChange }) {
     }
   });
 
+  if (recorder) {
+    recordingToggle.addEventListener("click", () => {
+      recorder.toggle();
+      paintRecording();
+    });
+  } else {
+    recordingRow.hidden = true;
+  }
+
+  function paintRecording(message) {
+    const active = Boolean(recorder?.active);
+    recordingRow.dataset.active = String(active);
+    recordingToggle.textContent = active ? "Stop" : "Start";
+    recordingToggle.setAttribute("aria-pressed", String(active));
+    recordingStatus.textContent = message ?? recorder?.summary() ?? "off";
+  }
+
   return {
     get hidden() {
       return panel.hidden;
+    },
+    /** Called from the readout tick so the elapsed time keeps counting. */
+    updateRecording(message) {
+      if (panel.hidden || !recorder) return;
+      paintRecording(message);
     },
     updateReadout(groupKey, values) {
       if (panel.hidden) return;

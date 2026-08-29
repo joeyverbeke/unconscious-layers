@@ -7,6 +7,7 @@ import { createPerception } from "./perception/perception.js";
 import { createExperience, STATE } from "./experience/experienceState.js";
 import { createRevealInvert } from "./experience/revealInvert.js";
 import { createRevealText } from "./experience/revealText.js";
+import { createRecorder } from "./recording/recorder.js";
 
 // Must happen before loadSettings, or the saved blob wins again.
 if (flags.resetSettings) clearSavedSettings({ palettes: false });
@@ -29,9 +30,18 @@ const perception = createPerception({
   canvasSize: () => painting.size,
 });
 
+// Continuous capture, off until somebody turns it on in the debug panel.
+let cameraVideo = null;
+const recorder = createRecorder({
+  getCanvas: () => document.querySelector("#stage canvas"),
+  getVideo: () => cameraVideo,
+  onStatus: ({ message }) => debugPanel?.updateRecording(message),
+});
+
 debugPanel = createDebugPanel({
   settings,
   defaults: DEFAULT_SETTINGS,
+  recorder,
   onChange: (key, committed = true) => {
     painting.handleSettingsChange(key, committed);
     perception.reconfigure(key);
@@ -40,7 +50,10 @@ debugPanel = createDebugPanel({
 });
 
 // ---- perception -> painting ------------------------------------------------
-perception.on("video", (video) => debugPanel.attachCamera(video));
+perception.on("video", (video) => {
+  cameraVideo = video;
+  debugPanel.attachCamera(video);
+});
 
 perception.on("face", ({ featurePoints }) => painting.updateFacePoints(featurePoints));
 
@@ -128,6 +141,7 @@ setInterval(() => {
   });
 
   debugPanel.updateChannels(perception.handles.discovery.report());
+  debugPanel.updateRecording();
 }, 250);
 
 if (import.meta.env.DEV) {

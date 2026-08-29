@@ -5,6 +5,9 @@ node_modules/
 dist/
 dist-ssr/
 
+# Local screen/camera captures from the debug panel recorder.
+recordings/
+
 # Logs
 *.log
 npm-debug.log*

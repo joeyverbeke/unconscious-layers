@@ -59,6 +59,26 @@
   color: #fff;
 }
 
+.debug-recording {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.4rem;
+  padding: 0.5rem 0.7rem;
+  color: #aaa69e;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.debug-recording strong {
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.debug-recording[data-active="true"] strong {
+  color: #ff6b5e;
+}
+
 .debug-previews {
   display: grid;
   gap: 0.75rem;

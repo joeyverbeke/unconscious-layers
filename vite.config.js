@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
+import { recorderPlugin } from "./scripts/vite-recorder-plugin.js";
 
 // The MediaPipe wasm fileset is served from ONE url, /mediapipe/wasm, in both
 // dev and build. The plugin installs a dev middleware as well as copying at
@@ -16,6 +17,8 @@ export default defineConfig({
         { src: "node_modules/@mediapipe/tasks-vision/wasm/*", dest: "mediapipe/wasm" },
       ],
     }),
+    // Writes the debug panel's captures into ./recordings (dev and preview).
+    recorderPlugin({ dir: "recordings" }),
   ],
   build: { target: "es2022" },
 });
