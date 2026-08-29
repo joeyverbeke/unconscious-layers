@@ -1,5 +1,6 @@
 import p5 from "p5";
 import { PaintingQueue } from "./PaintingQueue.js";
+import { faceLandmarkIndex } from "./faceAssignment.js";
 import { createScale } from "./scale.js";
 
 const BLEND_LAYER_MULTIPLY = "multiply";
@@ -428,16 +429,30 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
   // ------------------------------------------------------- the tracked forms
 
 
+  /**
+   * Every landmark gets a mark. Always.
+   *
+   * The proportional mapping this used to do — floor(i / marks * points) —
+   * silently dropped landmarks whenever there were fewer marks than points:
+   * 80 marks covered 80 of 120 landmarks and left 40 with nothing. The gaps
+   * fell hardest on the face oval, simply because it is the largest group, so
+   * the head outline came out unfinished. Assigning point (i % points) instead
+   * covers every landmark by construction before any point gets a second mark.
+   */
   function createFaceFeatureObjects(painting, featurePoints) {
-    const desiredCount = Math.min(
-      settings.maxFaceObjects,
-      featurePoints.length * settings.objectsPerFaceLandmark,
+    const pointCount = featurePoints.length;
+    if (pointCount === 0) return [];
+
+    // One per landmark is the floor, not a target. maxFaceObjects caps the
+    // extras, never the face itself.
+    const desiredCount = Math.max(
+      pointCount,
+      Math.min(settings.maxFaceObjects, pointCount * settings.objectsPerFaceLandmark),
     );
-    const dedicatedObjects = takeObjectsFromPainting(painting, desiredCount);
+    const dedicatedObjects = takeObjectsFromPainting(painting, desiredCount, pointCount);
 
     for (let i = 0; i < dedicatedObjects.length; i += 1) {
-      const pointIndex = Math.floor((i / dedicatedObjects.length) * featurePoints.length);
-      const point = featurePoints[pointIndex];
+      const point = featurePoints[faceLandmarkIndex(i, dedicatedObjects.length, pointCount)];
       // Marks on the eyes and lips read larger than marks tracing the jaw, so
       // the face does not dissolve into an even scatter of identical dots.
       dedicatedObjects[i].faceEmphasis = point.scale ?? 1;
@@ -449,12 +464,26 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
     return dedicatedObjects;
   }
 
-  function takeObjectsFromPainting(painting, desiredCount) {
+  /**
+   * Borrow marks out of the painting.
+   *
+   * `minimumCount` is a promise, not a preference: if the size filter cannot
+   * find enough small marks, the shortfall is taken without it. Otherwise a
+   * painting that happens to be full of large marks — or a lowered
+   * maxOutlineObjectSize — quietly leaves landmarks with nothing on them.
+   */
+  function takeObjectsFromPainting(painting, desiredCount, minimumCount = 0) {
     const maxSize = scale.px(settings.maxOutlineObjectSize);
     const dedicatedObjects = painting.extractFirst(
       (object) => object.size <= maxSize,
       desiredCount,
     );
+
+    const shortfall = Math.min(minimumCount, desiredCount) - dedicatedObjects.length;
+    if (shortfall > 0) {
+      dedicatedObjects.push(...painting.extractFirst(() => true, shortfall));
+    }
+
     rebuildPaintingLayers(painting);
 
     for (const object of dedicatedObjects) {
@@ -482,9 +511,13 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
    */
   function updateFaceTargets(faceObjects, featurePoints) {
     if (faceObjects.length === 0 || featurePoints.length === 0) return;
+    // Same mapping as createFaceFeatureObjects, or every mark would jump to a
+    // different feature on the frame after it was placed.
     for (let i = 0; i < faceObjects.length; i += 1) {
-      const pointIndex = Math.floor((i / faceObjects.length) * featurePoints.length);
-      attachObjectToPoint(faceObjects[i], featurePoints[pointIndex]);
+      attachObjectToPoint(
+        faceObjects[i],
+        featurePoints[faceLandmarkIndex(i, faceObjects.length, featurePoints.length)],
+      );
     }
   }
 

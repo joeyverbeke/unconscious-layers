@@ -195,7 +195,7 @@ const NUMBER_CONTROLS = [
   },
   {
     key: "maxFaceObjects",
-    label: "Face mark limit",
+    label: "Face mark limit (extras only)",
     min: 25,
     max: 2000,
     step: 25,

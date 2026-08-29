@@ -26,6 +26,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   highlightOpacityHighPercent: 20,
 
   // ---- tracked forms ------------------------------------------------------
+  // A ceiling on the EXTRA marks only. One mark per landmark is guaranteed
+  // regardless — lowering this thins the face, it never leaves gaps in it.
   maxFaceObjects: 300,
   // How fast a borrowed mark travels to the landmark it was assigned.
   outlineApproachSpeedPixelsPerSecond: 350,

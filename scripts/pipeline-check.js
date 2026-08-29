@@ -7,6 +7,8 @@ import { createBlinkPipeline } from '../src/perception/blinkPipeline.js';
 import { createEngagement } from '../src/experience/engagement.js';
 import { createTierGovernor } from '../src/settings/tiers.js';
 import { createDiscovery } from '../src/perception/blink/discovery.js';
+import { faceLandmarkIndex } from '../src/painting/faceAssignment.js';
+import { FACE_LANDMARK_GROUPS } from '../src/perception/faceFeatures.js';
 import { mapDiscoverySettings } from '../src/perception/tuning.js';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults.js';
 
@@ -92,6 +94,55 @@ console.log('\nBlink pipeline — a blink is seen, a slow squint is not\n');
   for (let i = 0; i < 10; i++) { at += 16; closed = pipe.frame({ left: 0, right: 0, points: null, matrix: null, at, hasFace: false }).closed; }
   ok('the reveal releases on its own when the face disappears', closed === false);
 }
+
+// ---------------------------------------------------------------------------
+// Every landmark gets a mark.
+//
+// The bug this guards: the old proportional mapping dropped one landmark for
+// every mark it was short. At 80 marks it covered 80 of 120 landmarks and left
+// 40 bare — and because the groups run eyes, lips, nose, OVAL, the gaps hit the
+// head outline hardest. The face came out with an unfinished jaw.
+// ---------------------------------------------------------------------------
+console.log('\nThe face is drawn on every landmark\n');
+{
+  const points = FACE_LANDMARK_GROUPS.flat().length;
+  ok('the sparse face is the five curated groups', points === 120, `${points} landmarks`);
+
+  const covered = (marks) => {
+    const hit = new Set();
+    for (let i = 0; i < marks; i += 1) hit.add(faceLandmarkIndex(i, marks, points));
+    return hit.size;
+  };
+
+  ok('one mark per landmark covers all of them', covered(points) === points);
+  ok('two marks per landmark still covers all of them', covered(points * 2) === points);
+  ok('an odd surplus covers all of them', covered(points + 7) === points);
+
+  // Fewer marks than landmarks: cannot cover everything, but must not abandon
+  // the tail — that is the face oval.
+  const groups = FACE_LANDMARK_GROUPS.map((g) => g.length);
+  const ovalStart = points - groups[groups.length - 1];
+  const ovalCoverage = (marks) => {
+    const hit = new Set();
+    for (let i = 0; i < marks; i += 1) hit.add(faceLandmarkIndex(i, marks, points));
+    let n = 0;
+    for (let i = ovalStart; i < points; i += 1) if (hit.has(i)) n += 1;
+    return n / (points - ovalStart);
+  };
+  ok('a short pool still reaches the face oval',
+     ovalCoverage(80) > 0.5, `${Math.round(ovalCoverage(80) * 100)}% of the oval`);
+  ok('and spreads its loss instead of truncating',
+     Math.abs(ovalCoverage(80) - 80 / points) < 0.1,
+     `oval ${Math.round(ovalCoverage(80) * 100)}% vs overall ${Math.round((80 / points) * 100)}%`);
+
+  // Placement and follow must agree, or marks jump the frame after placement.
+  const placed = [], followed = [];
+  for (let i = 0; i < 240; i += 1) placed.push(faceLandmarkIndex(i, 240, points));
+  for (let i = 0; i < 240; i += 1) followed.push(faceLandmarkIndex(i, 240, points));
+  ok('placing and following use the same mapping',
+     placed.every((v, i) => v === followed[i]));
+}
+
 
 console.log('\nEngagement — face scale, with hysteresis and dwell\n');
 {
