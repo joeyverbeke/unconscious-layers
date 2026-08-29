@@ -7,12 +7,15 @@ export const TIERS = {
   // to be. The ladder only ever steps DOWN from what the work actually is.
   high: {
     objectCount: 22000, primitivesPerSecond: 45, maxFaceObjects: 300, rotatedSquares: true,
+    renderMaxHeight: 1440,
   },
   medium: {
     objectCount: 10000, primitivesPerSecond: 22, maxFaceObjects: 240, rotatedSquares: true,
+    renderMaxHeight: 1080,
   },
   low: {
     objectCount: 5000, primitivesPerSecond: 12, maxFaceObjects: 180, rotatedSquares: false,
+    renderMaxHeight: 900,
   },
 };
 

@@ -6,6 +6,14 @@
 
 export const DEFAULT_SETTINGS = Object.freeze({
   // ---- painting -----------------------------------------------------------
+  // Ceiling on the canvas BACKING height in real pixels; CSS then stretches it
+  // to fill the display. Counts do not scale with the canvas but sizes do (see
+  // src/painting/scale.js), so a taller display makes every one of the 22,000
+  // marks bigger AND gives it more pixels to cover — the cost of a frame grows
+  // with the SQUARE of the height. At 4K that is nine times the reference.
+  // Aspect is preserved, so this costs sharpness and nothing else.
+  // 0 disables the cap and renders at the display's own resolution.
+  renderMaxHeight: 1440,
   objectCount: 22000,
   primitivesPerSecond: 45,
   maxTyphoonSize: 250,

@@ -75,6 +75,21 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
   // frozen object per palette entry, so identical colours are the same string.
   const drawState = { fill: null, stroke: null, alpha: -1 };
 
+  /**
+   * Backing-store size for a given viewport, capped by renderMaxHeight.
+   *
+   * Aspect is preserved and CSS stretches the canvas over the whole display,
+   * so this trades sharpness — and nothing else — for a frame cost that stops
+   * growing with the size of the screen it is shown on.
+   */
+  function renderSize(viewportWidth, viewportHeight) {
+    const width = viewportWidth || REFERENCE_WIDTH;
+    const height = viewportHeight || REFERENCE_HEIGHT;
+    const cap = settings.renderMaxHeight;
+    if (!Number.isFinite(cap) || cap <= 0 || height <= cap) return { width, height };
+    return { width: Math.round(width * (cap / height)), height: Math.round(cap) };
+  }
+
   const instance = new p5((p) => {
     sketch = p;
 
@@ -91,10 +106,8 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
       // 0 and turned every coordinate into NaN, which it could never come back
       // from. Fall back to the reference resolution and let the first real
       // resize scale it up.
-      const canvas = p.createCanvas(
-        p.windowWidth || REFERENCE_WIDTH,
-        p.windowHeight || REFERENCE_HEIGHT,
-      );
+      const initial = renderSize(p.windowWidth, p.windowHeight);
+      const canvas = p.createCanvas(initial.width, initial.height);
       canvas.parent(mount);
       scale = createScale(p.width, p.height);
       p.rectMode(p.CENTER);
@@ -161,14 +174,16 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
     // real viewport, which silently turns this into a no-op.
     p.windowResized = () => {
       window.clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(
-        () => applyResize(window.innerWidth, window.innerHeight),
-        200,
-      );
+      resizeTimer = window.setTimeout(() => applyToViewport(), 200);
     };
   });
 
   // ---------------------------------------------------------------- resizing
+
+  function applyToViewport() {
+    const next = renderSize(window.innerWidth, window.innerHeight);
+    applyResize(next.width, next.height);
+  }
 
   function applyResize(nextWidth, nextHeight) {
     const p = sketch;
@@ -289,6 +304,14 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
       pendingTyphoonPieces = [];
       pendingTyphoonIndex = 0;
       activeFaceObjects = [];
+      return;
+    }
+
+    // Changing the cap changes the backing store, which is a resize in every
+    // respect: geometry has to be scaled into the new coordinate space.
+    if (key === "renderMaxHeight") {
+      if (!committed) return;
+      applyToViewport();
       return;
     }
 

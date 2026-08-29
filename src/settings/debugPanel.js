@@ -74,6 +74,14 @@ const BOOLEAN_CONTROLS = [
 
 const NUMBER_CONTROLS = [
   {
+    key: "renderMaxHeight",
+    label: "Render height cap (px, 0 = display)",
+    min: 0,
+    max: 2160,
+    step: 60,
+    section: "performance",
+  },
+  {
     key: "objectCount",
     label: "Painting mark count",
     min: 500,

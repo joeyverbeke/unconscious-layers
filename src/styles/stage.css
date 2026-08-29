@@ -13,15 +13,21 @@ body,
   overflow: hidden;
 }
 
-/* The canvas is CREATED at viewport size, so it is never scaled by CSS.
-   Repo A stretched a fixed 1120x800 canvas to 100vw/100vh with !important;
-   everything visually tuned there was tuned through that non-square-pixel
-   stretch. See src/painting/scale.js. */
+/* The canvas is created at viewport size UNLESS renderMaxHeight caps it, and
+   the cap preserves aspect exactly (see renderSize in painting.js), so this
+   stretch only ever resamples square pixels to square pixels.
+   !important is load-bearing: p5 writes width/height as INLINE styles on every
+   createCanvas and resizeCanvas, and an inline style beats this rule without
+   it — the canvas would sit at its backing size in the corner of the screen.
+   This is not repo A's mistake. There a FIXED 1120x800 canvas was stretched to
+   whatever 100vw/100vh happened to be, so everything was tuned through a
+   non-square-pixel distortion. Here the aspect ratio is preserved by
+   construction and only sharpness is traded. See src/painting/scale.js. */
 #stage,
 #stage canvas {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: 100% !important;
+  height: 100% !important;
 }
 
 #camera-error {
