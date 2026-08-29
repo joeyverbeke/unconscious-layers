@@ -1,7 +1,7 @@
 import p5 from "p5";
 import { PaintingQueue } from "./PaintingQueue.js";
 import { faceLandmarkIndex } from "./faceAssignment.js";
-import { createScale } from "./scale.js";
+import { createScale, REFERENCE_WIDTH, REFERENCE_HEIGHT } from "./scale.js";
 
 const BLEND_LAYER_MULTIPLY = "multiply";
 const BLEND_LAYER_NORMAL = "normal";
@@ -40,6 +40,9 @@ const DIRECTIONAL_DRIFT = 0.5;
 
 const REF_NOISE_SCALE = 0.001;
 
+const TAU = Math.PI * 2;
+const INVERSE_255 = 1 / 255;
+
 /**
  * The generative painting, plus the tracked forms that are drawn out of it.
  *
@@ -67,7 +70,10 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
   let lastFaceSeenAt = -Infinity;
   let resizeTimer = 0;
 
-  const drawState = { mode: null, r: -1, g: -1, b: -1, alpha: -1 };
+  // Mirrors the canvas context so the draw loop only touches it when something
+  // actually changed. `css` is compared by reference: hexToRgb hands out one
+  // frozen object per palette entry, so identical colours are the same string.
+  const drawState = { fill: null, stroke: null, alpha: -1 };
 
   const instance = new p5((p) => {
     sketch = p;
@@ -78,7 +84,17 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
         p.randomSeed(flags.testSeed);
         p.noiseSeed(flags.testSeed);
       }
-      const canvas = p.createCanvas(p.windowWidth, p.windowHeight);
+      // A viewport that reports 0 at setup — a window still being laid out, a
+      // kiosk shell mapping its window, an embedded frame — used to build the
+      // whole painting at scale 0: every mark sized 0 at (0,0), so the piece
+      // showed nothing. Worse, the resize that followed divided by a width of
+      // 0 and turned every coordinate into NaN, which it could never come back
+      // from. Fall back to the reference resolution and let the first real
+      // resize scale it up.
+      const canvas = p.createCanvas(
+        p.windowWidth || REFERENCE_WIDTH,
+        p.windowHeight || REFERENCE_HEIGHT,
+      );
       canvas.parent(mount);
       scale = createScale(p.width, p.height);
       p.rectMode(p.CENTER);
@@ -115,19 +131,23 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
       updateFallingOutlineObjects(frameScale);
       resetDrawState();
 
+      const ctx = p.drawingContext;
+
       // Batch by blend layer so the compositing mode changes three times a
       // frame rather than forty thousand.
-      drawPaintingLayer(p, paintingLayers[BLEND_LAYER_MULTIPLY], p.MULTIPLY);
-      drawPaintingLayer(p, paintingLayers[BLEND_LAYER_NORMAL], p.BLEND);
-      drawPaintingLayer(p, paintingLayers[BLEND_LAYER_SCREEN], p.SCREEN);
+      drawPaintingLayer(p, ctx, paintingLayers[BLEND_LAYER_MULTIPLY], p.MULTIPLY);
+      drawPaintingLayer(p, ctx, paintingLayers[BLEND_LAYER_NORMAL], p.BLEND);
+      drawPaintingLayer(p, ctx, paintingLayers[BLEND_LAYER_SCREEN], p.SCREEN);
       p.blendMode(p.BLEND);
 
       // Tracked forms are independent layers: FIFO turnover in the painting
       // cannot recycle them, and they are always drawn normally blended on top.
       if (settings.drawFaceLandmarks) {
-        for (const object of activeFaceObjects) drawObject(p, object);
+        for (const object of activeFaceObjects) drawObject(ctx, object);
       }
-      for (const object of fallingOutlineObjects) drawObject(p, object);
+      for (const object of fallingOutlineObjects) drawObject(ctx, object);
+
+      releaseContext(p, ctx);
 
       if (p.millis() - lastStatsAt >= 250) {
         onStats(objects.length, p.frameRate());
@@ -154,6 +174,20 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
     const p = sketch;
     if (!p || nextWidth <= 0 || nextHeight <= 0) return;
     if (nextWidth === p.width && nextHeight === p.height) return;
+
+    // Guard the divisions below. Everything here scales existing geometry by
+    // the RATIO of the two sizes, which is meaningless from a zero width.
+    if (p.width <= 0 || p.height <= 0) {
+      p.resizeCanvas(nextWidth, nextHeight);
+      scale = createScale(nextWidth, nextHeight);
+      objects = buildInitialPainting(p, () => nextObjectId++);
+      pendingTyphoonPieces = [];
+      pendingTyphoonIndex = 0;
+      activeFaceObjects = [];
+      fallingOutlineObjects = [];
+      rebuildPaintingLayers(objects);
+      return;
+    }
 
     const sx = nextWidth / p.width;
     const sy = nextHeight / p.height;
@@ -685,87 +719,100 @@ export function createPainting({ mount, settings, flags, onStats = () => {} }) {
 
   // ----------------------------------------------------------------- drawing
 
-  function drawPaintingLayer(p, painting, blendMode) {
+  // Every mark is drawn straight onto the 2D context rather than through p5.
+  //
+  // p5's fill(r,g,b,a) allocates a p5.Color, converts it, builds an
+  // "rgba(...)" string and hands that to the canvas, which then parses it as
+  // CSS. Alpha here is a continuous random float, so no two consecutive marks
+  // share a colour and none of that work was ever reused: at 22,000 marks a
+  // frame it was tens of thousands of allocations and CSS colour parses per
+  // frame, all on the main thread. That is why a fast GPU changed nothing.
+  //
+  // Instead the colour is one of nine interned opaque strings and the opacity
+  // rides on globalAlpha, which is a plain float. Identical output, no
+  // allocation, and the browser parses nine colours for the life of the page.
+  function drawPaintingLayer(p, ctx, painting, blendMode) {
     p.blendMode(blendMode);
-    for (let index = painting.head; index < painting.items.length; index += 1) {
-      drawObject(p, painting.items[index]);
+    const items = painting.items;
+    for (let index = painting.head; index < items.length; index += 1) {
+      drawObject(ctx, items[index]);
     }
   }
 
-  function drawObject(p, object) {
-    const { r, g, b } = object.color;
+  function drawObject(ctx, object) {
+    const alpha = object.alpha * INVERSE_255;
+    if (drawState.alpha !== alpha) {
+      ctx.globalAlpha = alpha;
+      drawState.alpha = alpha;
+    }
+    const css = object.color.css;
+    const size = object.size;
 
     if (object.type === 0) {
-      prepareFill(p, r, g, b, object.alpha);
-      // push/translate/rotate/pop is a full canvas transform save-restore per
-      // mark, on roughly a third of them. Turning rotation off removes that
-      // for a difference the eye barely registers at these sizes.
+      if (drawState.fill !== css) {
+        ctx.fillStyle = css;
+        drawState.fill = css;
+      }
+      const half = size / 2;
+      // p5's push/pop saved and restored the ENTIRE renderer style state per
+      // mark. setTransform writes six numbers and allocates nothing.
       if (settings.rotatedSquares) {
-        p.push();
-        p.translate(object.x, object.y);
-        p.rotate(object.angle);
-        p.square(0, 0, object.size);
-        p.pop();
+        ctx.setTransform(object.angleCosine, object.angleSine, -object.angleSine, object.angleCosine, object.x, object.y);
+        ctx.fillRect(-half, -half, size, size);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
       } else {
-        p.rect(object.x, object.y, object.size, object.size);
+        ctx.fillRect(object.x - half, object.y - half, size, size);
       }
       return;
     }
 
     if (object.type === 1) {
-      prepareFill(p, r, g, b, object.alpha);
-      p.circle(object.x, object.y, object.size);
+      if (drawState.fill !== css) {
+        ctx.fillStyle = css;
+        drawState.fill = css;
+      }
+      ctx.beginPath();
+      ctx.arc(object.x, object.y, size / 2, 0, TAU);
+      ctx.fill();
       return;
     }
 
-    const halfWidth = object.size / 2;
+    if (drawState.stroke !== css) {
+      ctx.strokeStyle = css;
+      drawState.stroke = css;
+    }
+    const halfWidth = size / 2;
     const dx = object.angleCosine * halfWidth;
     const dy = object.angleSine * halfWidth;
-    prepareStroke(p, r, g, b, object.alpha);
-    p.line(object.x - dx, object.y - dy, object.x + dx, object.y + dy);
+    ctx.beginPath();
+    ctx.moveTo(object.x - dx, object.y - dy);
+    ctx.lineTo(object.x + dx, object.y + dy);
+    ctx.stroke();
   }
 
   function resetDrawState() {
-    drawState.mode = null;
-    drawState.r = -1;
-    drawState.g = -1;
-    drawState.b = -1;
+    drawState.fill = null;
+    drawState.stroke = null;
     drawState.alpha = -1;
   }
 
-  function prepareFill(p, r, g, b, alpha) {
-    if (drawState.mode !== "fill") {
-      p.noStroke();
-      drawState.mode = "fill";
-      drawState.alpha = -1;
+  /**
+   * Hand the context back to p5 in the state p5 believes it is in.
+   *
+   * p5 caches the last fillStyle it set and SKIPS the assignment when the new
+   * one matches, so a context we changed behind its back makes the next
+   * background() paint in the last mark's colour. A leftover globalAlpha is
+   * worse still: background() does not reset it, so the clear would be
+   * translucent and the painting would smear frame over frame.
+   */
+  function releaseContext(p, ctx) {
+    ctx.globalAlpha = 1;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const renderer = p._renderer;
+    if (renderer) {
+      renderer._cachedFillStyle = undefined;
+      renderer._cachedStrokeStyle = undefined;
     }
-    if (isSameDrawColor(r, g, b, alpha)) return;
-    p.fill(r, g, b, alpha);
-    saveDrawColor(r, g, b, alpha);
-  }
-
-  function prepareStroke(p, r, g, b, alpha) {
-    if (drawState.mode !== "stroke") {
-      p.noFill();
-      drawState.mode = "stroke";
-      drawState.alpha = -1;
-    }
-    if (isSameDrawColor(r, g, b, alpha)) return;
-    p.stroke(r, g, b, alpha);
-    saveDrawColor(r, g, b, alpha);
-  }
-
-  function isSameDrawColor(r, g, b, alpha) {
-    return (
-      drawState.r === r && drawState.g === g && drawState.b === b && drawState.alpha === alpha
-    );
-  }
-
-  function saveDrawColor(r, g, b, alpha) {
-    drawState.r = r;
-    drawState.g = g;
-    drawState.b = b;
-    drawState.alpha = alpha;
   }
 
   return {
@@ -816,7 +863,23 @@ function fractional(value) {
   return value - Math.floor(value);
 }
 
+// Memoised, and the object it returns is SHARED by every mark of that colour.
+// Two consequences, both of which the draw loop depends on: the palette costs
+// nine allocations for the life of the page rather than one per mark, and
+// `object.color.css` is one of nine interned strings, so assigning it to
+// ctx.fillStyle repeatedly is the cheapest case the canvas has.
+const COLOR_CACHE = new Map();
+
 function hexToRgb(hex) {
+  let color = COLOR_CACHE.get(hex);
+  if (color) return color;
   const value = Number.parseInt(hex.slice(1), 16);
-  return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  // Opaque. Per-mark opacity rides on ctx.globalAlpha instead, which is a
+  // float assignment rather than a CSS colour string the browser must parse.
+  color = Object.freeze({ r, g, b, css: `rgb(${r},${g},${b})` });
+  COLOR_CACHE.set(hex, color);
+  return color;
 }
